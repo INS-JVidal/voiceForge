@@ -10,6 +10,7 @@ license = "GPL-3.0-or-later"
 [dependencies]
 world-sys = { path = "crates/world-sys" }
 cpal = "0.17"
+crossbeam-channel = "0.5"
 symphonia = { version = "0.5", features = ["mp3", "wav", "pcm", "flac"] }
 ratatui = "0.30"
 

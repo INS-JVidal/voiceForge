@@ -11,7 +11,7 @@ pub fn render(frame: &mut Frame, area: Rect, app: &AppState) {
         let mins = (info.duration_secs / 60.0) as u32;
         let secs = (info.duration_secs % 60.0) as u32;
         let ch_str = if info.channels == 1 { "Mono" } else { "Stereo" };
-        Line::from(vec![
+        let mut spans = vec![
             Span::styled(" File: ", Style::default().fg(Color::DarkGray)),
             Span::styled(&info.name, Style::default().fg(Color::White)),
             Span::styled(" │ ", Style::default().fg(Color::DarkGray)),
@@ -26,7 +26,12 @@ pub fn render(frame: &mut Frame, area: Rect, app: &AppState) {
                 format!("{mins}:{secs:02}"),
                 Style::default().fg(Color::White),
             ),
-        ])
+        ];
+        if let Some(ref status) = app.processing_status {
+            spans.push(Span::styled(" │ ", Style::default().fg(Color::DarkGray)));
+            spans.push(Span::styled(status, Style::default().fg(Color::Yellow)));
+        }
+        Line::from(spans)
     } else if let Some(ref msg) = app.status_message {
         Line::from(Span::styled(
             format!(" {msg}"),

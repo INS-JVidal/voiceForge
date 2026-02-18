@@ -1,5 +1,6 @@
 use crate::audio::decoder::AudioData;
 use crate::audio::playback::PlaybackState;
+use crate::dsp::modifier::WorldSliderValues;
 use std::sync::Arc;
 
 /// Which mode the UI is in.
@@ -33,6 +34,7 @@ impl PanelFocus {
 pub enum Action {
     Quit,
     LoadFile(String),
+    Resynthesize,
 }
 
 /// Info about the currently loaded file.
@@ -85,6 +87,7 @@ pub struct AppState {
     pub file_info: Option<FileInfo>,
     pub playback: PlaybackState,
     pub audio_data: Option<Arc<AudioData>>,
+    pub processing_status: Option<String>,
     pub loop_enabled: bool,
     pub ab_original: bool,
     pub should_quit: bool,
@@ -103,6 +106,7 @@ impl AppState {
             file_info: None,
             playback: PlaybackState::new(),
             audio_data: None,
+            processing_status: None,
             loop_enabled: false,
             ab_original: false,
             should_quit: false,
@@ -251,6 +255,19 @@ impl AppState {
     /// Number of sliders in the currently focused panel.
     pub fn focused_slider_count(&self) -> usize {
         self.focused_sliders().len()
+    }
+
+    /// Extract current WORLD slider values for the modifier.
+    pub fn world_slider_values(&self) -> WorldSliderValues {
+        let s = &self.world_sliders;
+        WorldSliderValues {
+            pitch_shift: s[0].value,
+            pitch_range: s[1].value,
+            speed: s[2].value,
+            breathiness: s[3].value,
+            formant_shift: s[4].value,
+            spectral_tilt: s[5].value,
+        }
     }
 }
 

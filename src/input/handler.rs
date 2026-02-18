@@ -77,13 +77,18 @@ fn handle_normal(key: KeyEvent, app: &mut AppState) -> Option<Action> {
             } else {
                 -1.0
             };
+            let focus = app.focus;
             let idx = app.selected_slider;
             if let Some(sliders) = app.focused_sliders_mut() {
                 if idx < sliders.len() {
                     sliders[idx].adjust(steps);
                 }
             }
-            None
+            if focus == PanelFocus::WorldSliders {
+                Some(Action::Resynthesize)
+            } else {
+                None
+            }
         }
         KeyCode::Right => {
             let steps = if key.modifiers.contains(KeyModifiers::SHIFT) {
@@ -91,13 +96,18 @@ fn handle_normal(key: KeyEvent, app: &mut AppState) -> Option<Action> {
             } else {
                 1.0
             };
+            let focus = app.focus;
             let idx = app.selected_slider;
             if let Some(sliders) = app.focused_sliders_mut() {
                 if idx < sliders.len() {
                     sliders[idx].adjust(steps);
                 }
             }
-            None
+            if focus == PanelFocus::WorldSliders {
+                Some(Action::Resynthesize)
+            } else {
+                None
+            }
         }
         KeyCode::Char('r') => {
             app.loop_enabled = !app.loop_enabled;

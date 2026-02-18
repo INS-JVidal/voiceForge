@@ -150,6 +150,51 @@ fn build_stream<T: cpal::SizedSample + cpal::FromSample<f32>>(
     Ok(stream)
 }
 
+/// Rebuild the cpal output stream with new audio data, reusing the existing
+/// `PlaybackState` atomics (position and playing state are preserved).
+pub fn rebuild_stream(
+    audio: Arc<AudioData>,
+    state: &PlaybackState,
+) -> Result<Stream, PlaybackError> {
+    let host = cpal::default_host();
+    let device = host
+        .default_output_device()
+        .ok_or_else(|| PlaybackError("no output audio device found".into()))?;
+
+    let supported_config = device
+        .default_output_config()
+        .map_err(|e| PlaybackError(format!("no supported output config: {e}")))?;
+
+    let sample_format = supported_config.sample_format();
+    let config: StreamConfig = supported_config.into();
+
+    let ctx = CallbackContext {
+        playing: Arc::clone(&state.playing),
+        position: Arc::clone(&state.position),
+        total_samples: audio.samples.len(),
+        audio_channels: audio.channels,
+        device_channels: config.channels,
+        audio,
+    };
+
+    let stream = match sample_format {
+        SampleFormat::F32 => build_stream::<f32>(&device, &config, ctx)?,
+        SampleFormat::I16 => build_stream::<i16>(&device, &config, ctx)?,
+        SampleFormat::U16 => build_stream::<u16>(&device, &config, ctx)?,
+        other => {
+            return Err(PlaybackError(format!(
+                "unsupported sample format: {other:?}"
+            )));
+        }
+    };
+
+    stream
+        .play()
+        .map_err(|e| PlaybackError(format!("failed to start stream: {e}")))?;
+
+    Ok(stream)
+}
+
 fn write_audio_data<T: cpal::SizedSample + cpal::FromSample<f32>>(
     output: &mut [T],
     ctx: &CallbackContext,
