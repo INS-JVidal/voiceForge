@@ -60,7 +60,11 @@ pub fn analyze(audio: &AudioData) -> WorldParams {
 }
 
 /// Synthesize audio from WORLD parameters. Returns mono AudioData.
-pub fn synthesize(params: &WorldParams, sample_rate: u32) -> AudioData {
-    let samples = world_sys::synthesize(params, sample_rate as i32);
-    from_mono_f64(&samples, sample_rate)
+///
+/// # Errors
+///
+/// Returns an error if WORLD parameters are invalid or the output would be too large.
+pub fn synthesize(params: &WorldParams, sample_rate: u32) -> Result<AudioData, world_sys::WorldError> {
+    let samples = world_sys::synthesize(params, sample_rate as i32)?;
+    Ok(from_mono_f64(&samples, sample_rate))
 }

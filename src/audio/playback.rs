@@ -173,10 +173,8 @@ pub fn rebuild_stream(
     let ctx = CallbackContext {
         playing: Arc::clone(&state.playing),
         position: Arc::clone(&state.position),
-        total_samples: audio.samples.len(),
-        audio_channels: audio.channels,
         device_channels: config.channels,
-        audio,
+        audio: Arc::new(RwLock::new(audio)),
     };
 
     let stream = match sample_format {

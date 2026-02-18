@@ -131,8 +131,14 @@ fn processing_loop(cmd_rx: Receiver<ProcessingCommand>, result_tx: Sender<Proces
                 let _ = result_tx.send(ProcessingResult::Status("Processing...".into()));
                 let params = cached_params.as_ref().unwrap();
                 let modified = modifier::apply(params, &latest);
-                let audio = world::synthesize(&modified, sample_rate);
-                let _ = result_tx.send(ProcessingResult::SynthesisDone(audio));
+                match world::synthesize(&modified, sample_rate) {
+                    Ok(audio) => {
+                        let _ = result_tx.send(ProcessingResult::SynthesisDone(audio));
+                    }
+                    Err(e) => {
+                        let _ = result_tx.send(ProcessingResult::Status(format!("Synthesis error: {e}")));
+                    }
+                }
             }
             ProcessingCommand::Shutdown => break,
         }

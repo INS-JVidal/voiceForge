@@ -36,8 +36,8 @@ fn test_modifier_neutral_roundtrip() {
     assert_eq!(modified.spectrogram.len(), params.spectrogram.len());
 
     // Synthesize both and compare energy.
-    let original_audio = world_sys::synthesize(&params, sample_rate as i32);
-    let modified_audio = world_sys::synthesize(&modified, sample_rate as i32);
+    let original_audio = world_sys::synthesize(&params, sample_rate as i32).unwrap();
+    let modified_audio = world_sys::synthesize(&modified, sample_rate as i32).unwrap();
 
     let min_len = original_audio.len().min(modified_audio.len());
     let orig_energy: f64 = original_audio[..min_len].iter().map(|x| x * x).sum();
