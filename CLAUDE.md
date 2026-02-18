@@ -39,42 +39,62 @@ cargo fmt                  # Format
 
 ```
 Audio file → symphonia decoder → f32 PCM
-  → WORLD analysis (f0, sp, ap)
-  → Modifier (ndarray ops on f0/sp/ap per slider values)
-  → WORLD synthesis → f32 PCM
-  → Effects chain (fundsp + pitch_shift) → playback (cpal) + FFT spectrum (rustfft)
+  → WORLD analysis (f0, sp, ap)           [processing thread, on file load]
+  → Modifier (Vec<Vec<f64>> ops per slider values)
+  → WORLD synthesis → f32 PCM             [processing thread, on slider change]
+  → playback (cpal)
+  [future: → Effects chain → FFT spectrum]
 ```
 
-WORLD analysis is **offline** (~2-5s per minute of audio). Results are cached; resynthesis runs only when sliders change.
+WORLD analysis is **offline** (~2-5s per minute of audio). Results are cached in the processing thread; resynthesis runs only when sliders change (debounced 150ms). Neutral sliders skip WORLD synthesis and return a mono downmix of the original.
 
 ### Threading Model
 
-- **Main thread**: ratatui event loop (keyboard/mouse input, rendering)
-- **Audio thread**: cpal output stream, reads from ring buffer, handles A/B switching and seek
-- **Processing thread**: WORLD analysis/synthesis, modifier, effects, FFT
+- **Main thread**: ratatui event loop (keyboard/mouse input, rendering at ~30fps)
+- **Audio thread**: cpal output stream callback, reads from `Arc<RwLock<Arc<AudioData>>>`
+- **Processing thread**: WORLD analysis/synthesis, parameter modifier. Communicates via `crossbeam-channel`. Owns cached `WorldParams` (never crosses the channel boundary).
 
 ### Synchronization
 
-- `Arc<AtomicBool>` — play/pause, A/B toggle, loop flag
-- `Arc<Mutex<SliderState>>` — slider parameter values
-- `ringbuf` — lock-free audio buffer (processing → playback)
-- `crossbeam-channel` — UI commands → processing thread
+- `Arc<AtomicBool>` — play/pause (Acquire/Release ordering)
+- `Arc<AtomicUsize>` — playback position in interleaved samples (Acquire/Release ordering)
+- `Arc<RwLock<Arc<AudioData>>>` — audio callback reads current buffer; main thread swaps on resynthesis
+- `crossbeam-channel` — `ProcessingCommand` / `ProcessingResult` between main and processing threads
 
 ### Key Modules
 
-- `src/app.rs` — Central `AppState` holding all shared state
-- `src/audio/` — decoder (symphonia), playback (cpal), ring buffer, WAV export (hound)
-- `src/dsp/` — WORLD interface, parameter modifier, effects chain, spectrum FFT
-- `src/ui/` — ratatui layout, custom slider widget, spectrum display, transport controls
-- `src/input/` — keyboard/mouse event handler
+- `src/app.rs` — Central `AppState`, `Action` enum, `SliderDef`, `FileInfo`, `WorldSliderValues` helper
+- `src/audio/decoder.rs` — symphonia-based file decoder → `AudioData` (interleaved f32 PCM)
+- `src/audio/playback.rs` — cpal output stream, `PlaybackState` (atomics), `start_playback`, `rebuild_stream`
+- `src/dsp/world.rs` — f32↔f64 conversion, mono downmix (`to_mono`), thin wrappers around `world_sys::analyze`/`synthesize`
+- `src/dsp/modifier.rs` — `WorldSliderValues` struct, `apply()` with 6 transforms (pitch shift, pitch range, speed, breathiness, formant shift, spectral tilt)
+- `src/dsp/processing.rs` — `ProcessingHandle` (spawn/send/try_recv/shutdown), background thread with command drain and neutral-slider shortcut
+- `src/ui/` — ratatui layout, slider widget, spectrum placeholder, transport bar, status bar, file picker
+- `src/input/handler.rs` — keyboard event handler, returns `Option<Action>`
+- `crates/world-sys/` — FFI bindings; `analyze()` panics on invalid input, `synthesize()` returns `Result<Vec<f64>, WorldError>`
 
 ## Important Design Decisions
 
 - **ratatui 0.30**: crossterm is re-exported via `ratatui::crossterm` — no separate crossterm dependency needed
 - **Two pitch shift controls**: WORLD pitch shift (formant-preserving, modifies f0) vs Effects pitch shift (phase vocoder, shifts everything including formants)
-- **A/B comparison**: Two PCM buffers (original + processed) with shared seek position; `AtomicBool` toggles which buffer the audio thread reads from
-- **Resynthesis caching**: Only resynthesize on slider release, not during drag. Process long files in chunks with progress indicator.
+- **A/B comparison**: Two PCM buffers (original + processed) with shared seek position; `AtomicBool` toggles which buffer the audio thread reads from (placeholder — not yet wired)
+- **Consistent mono output**: WORLD always produces mono. The processing thread stores a mono downmix of the original for the neutral-slider shortcut. Main thread adjusts playback position on channel count changes (stereo→mono on first resynthesis).
+- **Debounced resynthesis**: 150ms debounce on slider changes. Processing thread drains stale `Resynthesize` commands, keeping only the latest.
+- **Stream rebuild on buffer swap**: `rebuild_stream` creates a new cpal stream reusing existing `PlaybackState` atomics (position/playing preserved). Sub-ms gap, inaudible after processing delay.
+- **world_sys error handling**: `synthesize()` returns `Result` (allocation guard, param validation). `analyze()` panics on invalid input (programmer error). Processing thread sends status message on synthesis failure.
 
 ## Implementation Phases
 
-The project follows phases P0–P8 defined in `plans/initial_plan.md`. P0 starts with WORLD FFI scaffolding and roundtrip test; P8 is polish. Refer to the plan for full details.
+The project follows phases P0–P8 defined in `plans/initial_plan.md`. Reports in `implementations/`.
+
+- **P0** — WORLD FFI scaffolding and roundtrip test ✓
+- **P1** — Audio decoder (symphonia) and cpal playback ✓
+- **P1b** — WSL2 audio fix ✓
+- **P2** — TUI skeleton with ratatui (sliders, transport, status bar, file picker) ✓
+- **P3** — WORLD integration and slider-driven resynthesis (6 transforms, processing thread, debounce) ✓
+- **P3b** — Audit integration corrections (API compat fixes after P0–P2 security audit merge) ✓
+- P4–P8 — Remaining (A/B comparison, spectrum FFT, effects chain, WAV export, polish)
+
+### Test Count
+
+18 tests: 4 decoder + 11 WORLD FFI + 3 modifier
