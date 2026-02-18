@@ -72,14 +72,13 @@ fn handle_normal(key: KeyEvent, app: &mut AppState) -> Option<Action> {
             None
         }
         KeyCode::Left => {
-            if app.focus != PanelFocus::Transport {
-                let steps = if key.modifiers.contains(KeyModifiers::SHIFT) {
-                    -0.2
-                } else {
-                    -1.0
-                };
-                let idx = app.selected_slider;
-                let sliders = app.focused_sliders_mut();
+            let steps = if key.modifiers.contains(KeyModifiers::SHIFT) {
+                -0.2
+            } else {
+                -1.0
+            };
+            let idx = app.selected_slider;
+            if let Some(sliders) = app.focused_sliders_mut() {
                 if idx < sliders.len() {
                     sliders[idx].adjust(steps);
                 }
@@ -87,14 +86,13 @@ fn handle_normal(key: KeyEvent, app: &mut AppState) -> Option<Action> {
             None
         }
         KeyCode::Right => {
-            if app.focus != PanelFocus::Transport {
-                let steps = if key.modifiers.contains(KeyModifiers::SHIFT) {
-                    0.2
-                } else {
-                    1.0
-                };
-                let idx = app.selected_slider;
-                let sliders = app.focused_sliders_mut();
+            let steps = if key.modifiers.contains(KeyModifiers::SHIFT) {
+                0.2
+            } else {
+                1.0
+            };
+            let idx = app.selected_slider;
+            if let Some(sliders) = app.focused_sliders_mut() {
                 if idx < sliders.len() {
                     sliders[idx].adjust(steps);
                 }

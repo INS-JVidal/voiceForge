@@ -47,10 +47,10 @@ pub fn render(frame: &mut Frame, area: Rect, app: &AppState) {
 
     // Seek bar
     let time_str = format!(" {cur_min}:{cur_sec:02}/{dur_min}:{dur_sec:02} ");
-    let meta_str = format!("{play_icon}  [Loop: {loop_str}]  ");
+    let loop_str = format!("  [Loop: {loop_str}]  ");
     let ab_display = format!(" [{ab_str}]");
     let bar_budget = (inner.width as usize)
-        .saturating_sub(meta_str.len() + time_str.len() + ab_display.len());
+        .saturating_sub(play_icon.len() + loop_str.len() + time_str.len() + ab_display.len());
 
     let fraction = if duration > 0.0 {
         (current_time / duration).clamp(0.0, 1.0)
@@ -68,10 +68,7 @@ pub fn render(frame: &mut Frame, area: Rect, app: &AppState) {
                 .fg(if playing { Color::Green } else { Color::Yellow })
                 .add_modifier(Modifier::BOLD),
         ),
-        Span::styled(
-            format!("  [Loop: {loop_str}]  "),
-            Style::default().fg(Color::White),
-        ),
+        Span::styled(loop_str, Style::default().fg(Color::White)),
         Span::styled("─".repeat(filled), Style::default().fg(Color::Cyan)),
         Span::styled("●", Style::default().fg(Color::White)),
         Span::styled("─".repeat(empty), Style::default().fg(Color::DarkGray)),

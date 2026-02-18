@@ -239,11 +239,12 @@ impl AppState {
     }
 
     /// Get the mutable sliders for the currently focused panel.
-    pub fn focused_sliders_mut(&mut self) -> &mut Vec<SliderDef> {
+    /// Returns `None` when Transport is focused (no sliders).
+    pub fn focused_sliders_mut(&mut self) -> Option<&mut Vec<SliderDef>> {
         match self.focus {
-            PanelFocus::WorldSliders => &mut self.world_sliders,
-            PanelFocus::EffectsSliders => &mut self.effects_sliders,
-            PanelFocus::Transport => &mut self.world_sliders, // unreachable in practice
+            PanelFocus::WorldSliders => Some(&mut self.world_sliders),
+            PanelFocus::EffectsSliders => Some(&mut self.effects_sliders),
+            PanelFocus::Transport => None,
         }
     }
 
