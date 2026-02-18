@@ -41,7 +41,8 @@ fn test_world_ffi_roundtrip() {
     assert_eq!(params.spectrogram[0].len(), sp_width);
 
     // Synthesize from unmodified parameters
-    let output = world_sys::synthesize(&params, sample_rate);
+    let output = world_sys::synthesize(&params, sample_rate)
+        .expect("synthesize should succeed with valid params");
 
     // Verify output length is reasonable (within one frame)
     let length_diff = (output.len() as isize - audio.len() as isize).unsigned_abs();
@@ -137,19 +138,17 @@ fn test_world_ffi_analyze_negative_sample_rate() {
 }
 
 #[test]
-#[should_panic(expected = "sample_rate must be positive")]
 fn test_world_ffi_synthesize_zero_sample_rate() {
     let audio: Vec<f64> = (0..4410)
         .map(|i| (2.0 * PI * 440.0 * i as f64 / 44100.0).sin())
         .collect();
     let params = world_sys::analyze(&audio, 44100);
-    let _ = world_sys::synthesize(&params, 0);
+    assert!(world_sys::synthesize(&params, 0).is_err());
 }
 
-// --- WorldParams consistency validation ---
+// --- WorldParams consistency validation (now returns Err, not panic) ---
 
 #[test]
-#[should_panic(expected = "f0 must not be empty")]
 fn test_world_ffi_synthesize_empty_f0() {
     let params = world_sys::WorldParams {
         f0: vec![],
@@ -159,11 +158,10 @@ fn test_world_ffi_synthesize_empty_f0() {
         fft_size: 1024,
         frame_period: 5.0,
     };
-    let _ = world_sys::synthesize(&params, 44100);
+    assert!(world_sys::synthesize(&params, 44100).is_err());
 }
 
 #[test]
-#[should_panic(expected = "spectrogram row count")]
 fn test_world_ffi_synthesize_mismatched_spectrogram() {
     let params = world_sys::WorldParams {
         f0: vec![440.0; 10],
@@ -173,11 +171,10 @@ fn test_world_ffi_synthesize_mismatched_spectrogram() {
         fft_size: 1024,
         frame_period: 5.0,
     };
-    let _ = world_sys::synthesize(&params, 44100);
+    assert!(world_sys::synthesize(&params, 44100).is_err());
 }
 
 #[test]
-#[should_panic(expected = "aperiodicity row count")]
 fn test_world_ffi_synthesize_mismatched_aperiodicity() {
     let params = world_sys::WorldParams {
         f0: vec![440.0; 10],
@@ -187,11 +184,10 @@ fn test_world_ffi_synthesize_mismatched_aperiodicity() {
         fft_size: 1024,
         frame_period: 5.0,
     };
-    let _ = world_sys::synthesize(&params, 44100);
+    assert!(world_sys::synthesize(&params, 44100).is_err());
 }
 
 #[test]
-#[should_panic(expected = "spectrogram[0] width")]
 fn test_world_ffi_synthesize_wrong_spectrogram_width() {
     let params = world_sys::WorldParams {
         f0: vec![440.0; 10],
@@ -201,11 +197,10 @@ fn test_world_ffi_synthesize_wrong_spectrogram_width() {
         fft_size: 1024,
         frame_period: 5.0,
     };
-    let _ = world_sys::synthesize(&params, 44100);
+    assert!(world_sys::synthesize(&params, 44100).is_err());
 }
 
 #[test]
-#[should_panic(expected = "temporal_positions length")]
 fn test_world_ffi_synthesize_mismatched_temporal_positions() {
     let params = world_sys::WorldParams {
         f0: vec![440.0; 10],
@@ -215,5 +210,5 @@ fn test_world_ffi_synthesize_mismatched_temporal_positions() {
         fft_size: 1024,
         frame_period: 5.0,
     };
-    let _ = world_sys::synthesize(&params, 44100);
+    assert!(world_sys::synthesize(&params, 44100).is_err());
 }

@@ -118,11 +118,16 @@ pub fn decode_file(path: &Path) -> Result<AudioData, DecoderError> {
         .sample_rate
         .ok_or_else(|| DecoderError::UnsupportedFormat("unknown sample rate".into()))?;
 
+    // #7: Return error if channel layout is unknown rather than silently defaulting.
     let channels = track
         .codec_params
         .channels
         .map(|ch| ch.count() as u16)
-        .unwrap_or(1);
+        .ok_or_else(|| DecoderError::UnsupportedFormat("unknown channel layout".into()))?;
+
+    if channels == 0 {
+        return Err(DecoderError::UnsupportedFormat("zero channels".into()));
+    }
 
     let mut decoder = symphonia::default::get_codecs()
         .make(&track.codec_params, &DecoderOptions::default())
@@ -158,11 +163,15 @@ pub fn decode_file(path: &Path) -> Result<AudioData, DecoderError> {
         let needed_samples = frames as usize * spec.channels.count();
 
         // Recreate the buffer if the current packet needs more interleaved samples.
+        // #3: The unwrap is safe because we just assigned Some on the previous line,
+        // but use expect() to document the invariant explicitly.
         let buf = match &mut sample_buf {
             Some(existing) if existing.capacity() >= needed_samples => existing,
             _ => {
                 sample_buf = Some(SampleBuffer::<f32>::new(frames, spec));
-                sample_buf.as_mut().unwrap()
+                sample_buf
+                    .as_mut()
+                    .expect("sample_buf was just assigned Some")
             }
         };
         buf.copy_interleaved_ref(audio_buf);

@@ -3,7 +3,31 @@ use crate::{
     GetSamplesForDIO, InitializeCheapTrickOption, InitializeD4COption, InitializeDioOption,
     StoneMask, Synthesis,
 };
+use std::fmt;
 use std::os::raw::c_int;
+
+/// Maximum output samples to allocate (~10 minutes at 96kHz).
+const MAX_SYNTHESIS_SAMPLES: usize = 96_000 * 60 * 10;
+
+/// Errors from WORLD parameter validation or synthesis.
+#[derive(Debug, Clone)]
+pub enum WorldError {
+    InvalidParams(String),
+    AllocationTooLarge { requested: usize, max: usize },
+}
+
+impl fmt::Display for WorldError {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            WorldError::InvalidParams(msg) => write!(f, "invalid WORLD params: {msg}"),
+            WorldError::AllocationTooLarge { requested, max } => {
+                write!(f, "synthesis output too large: {requested} samples (max {max})")
+            }
+        }
+    }
+}
+
+impl std::error::Error for WorldError {}
 
 /// Parameters extracted by WORLD analysis.
 #[derive(Debug, Clone)]
@@ -21,51 +45,56 @@ pub struct WorldParams {
 impl WorldParams {
     /// Validate internal consistency of parameters.
     ///
-    /// # Panics
-    ///
-    /// Panics if dimensions are inconsistent.
-    fn validate(&self) {
+    /// Returns `Err` if dimensions are inconsistent. Prefer this over panicking
+    /// so callers (including a future REST API) can handle errors gracefully.
+    fn validate(&self) -> Result<(), WorldError> {
         let frame_count = self.f0.len();
-        assert!(frame_count > 0, "f0 must not be empty");
-        assert!(self.fft_size > 0, "fft_size must be positive");
+        if frame_count == 0 {
+            return Err(WorldError::InvalidParams("f0 must not be empty".into()));
+        }
+        if self.fft_size == 0 {
+            return Err(WorldError::InvalidParams("fft_size must be positive".into()));
+        }
 
         let sp_width = self.fft_size / 2 + 1;
 
-        assert_eq!(
-            self.temporal_positions.len(),
-            frame_count,
-            "temporal_positions length ({}) must match f0 length ({frame_count})",
-            self.temporal_positions.len(),
-        );
-        assert_eq!(
-            self.spectrogram.len(),
-            frame_count,
-            "spectrogram row count ({}) must match f0 length ({frame_count})",
-            self.spectrogram.len(),
-        );
-        assert_eq!(
-            self.aperiodicity.len(),
-            frame_count,
-            "aperiodicity row count ({}) must match f0 length ({frame_count})",
-            self.aperiodicity.len(),
-        );
+        if self.temporal_positions.len() != frame_count {
+            return Err(WorldError::InvalidParams(format!(
+                "temporal_positions length ({}) != f0 length ({frame_count})",
+                self.temporal_positions.len(),
+            )));
+        }
+        if self.spectrogram.len() != frame_count {
+            return Err(WorldError::InvalidParams(format!(
+                "spectrogram rows ({}) != f0 length ({frame_count})",
+                self.spectrogram.len(),
+            )));
+        }
+        if self.aperiodicity.len() != frame_count {
+            return Err(WorldError::InvalidParams(format!(
+                "aperiodicity rows ({}) != f0 length ({frame_count})",
+                self.aperiodicity.len(),
+            )));
+        }
 
         for (i, row) in self.spectrogram.iter().enumerate() {
-            assert_eq!(
-                row.len(),
-                sp_width,
-                "spectrogram[{i}] width ({}) must be fft_size/2+1 ({sp_width})",
-                row.len(),
-            );
+            if row.len() != sp_width {
+                return Err(WorldError::InvalidParams(format!(
+                    "spectrogram[{i}] width ({}) != fft_size/2+1 ({sp_width})",
+                    row.len(),
+                )));
+            }
         }
         for (i, row) in self.aperiodicity.iter().enumerate() {
-            assert_eq!(
-                row.len(),
-                sp_width,
-                "aperiodicity[{i}] width ({}) must be fft_size/2+1 ({sp_width})",
-                row.len(),
-            );
+            if row.len() != sp_width {
+                return Err(WorldError::InvalidParams(format!(
+                    "aperiodicity[{i}] width ({}) != fft_size/2+1 ({sp_width})",
+                    row.len(),
+                )));
+            }
         }
+
+        Ok(())
     }
 }
 
@@ -173,6 +202,11 @@ pub fn analyze(audio: &[f64], sample_rate: i32) -> WorldParams {
         );
     }
 
+    // #12: Validate that FFI outputs contain finite values (no NaN/Inf from C code).
+    for val in &refined_f0 {
+        debug_assert!(val.is_finite(), "WORLD produced non-finite f0 value: {val}");
+    }
+
     WorldParams {
         f0: refined_f0,
         temporal_positions,
@@ -185,17 +219,13 @@ pub fn analyze(audio: &[f64], sample_rate: i32) -> WorldParams {
 
 /// Synthesize audio from WORLD parameters.
 ///
-/// Returns the reconstructed audio waveform.
-///
-/// # Panics
-///
-/// Panics if `sample_rate` is not positive or `params` has inconsistent
-/// dimensions (e.g. spectrogram/aperiodicity row count doesn't match f0 length,
-/// or row widths don't match fft_size/2+1).
-#[must_use]
-pub fn synthesize(params: &WorldParams, sample_rate: i32) -> Vec<f64> {
-    assert!(sample_rate > 0, "sample_rate must be positive");
-    params.validate();
+/// Returns the reconstructed audio waveform, or an error if parameters are
+/// invalid or the output would be too large.
+pub fn synthesize(params: &WorldParams, sample_rate: i32) -> Result<Vec<f64>, WorldError> {
+    if sample_rate <= 0 {
+        return Err(WorldError::InvalidParams("sample_rate must be positive".into()));
+    }
+    params.validate()?;
 
     let fs = sample_rate;
     let f0_length = params.f0.len() as c_int;
@@ -205,6 +235,14 @@ pub fn synthesize(params: &WorldParams, sample_rate: i32) -> Vec<f64> {
         ((params.f0.len() as f64 - 1.0) * params.frame_period / 1000.0 * sample_rate as f64)
             as usize
             + 1;
+
+    // #19: Guard against unreasonable allocation sizes.
+    if y_length > MAX_SYNTHESIS_SAMPLES {
+        return Err(WorldError::AllocationTooLarge {
+            requested: y_length,
+            max: MAX_SYNTHESIS_SAMPLES,
+        });
+    }
 
     let mut y = vec![0.0f64; y_length];
 
@@ -226,5 +264,5 @@ pub fn synthesize(params: &WorldParams, sample_rate: i32) -> Vec<f64> {
         );
     }
 
-    y
+    Ok(y)
 }

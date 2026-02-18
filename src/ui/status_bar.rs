@@ -8,8 +8,10 @@ use crate::app::AppState;
 
 pub fn render(frame: &mut Frame, area: Rect, app: &AppState) {
     let line = if let Some(ref info) = app.file_info {
-        let mins = (info.duration_secs / 60.0) as u32;
-        let secs = (info.duration_secs % 60.0) as u32;
+        // #13: Clamp to avoid truncation for very long audio (>71 min wraps u32).
+        let total_secs = info.duration_secs.max(0.0);
+        let mins = (total_secs / 60.0).min(u32::MAX as f64) as u32;
+        let secs = (total_secs % 60.0) as u32;
         let ch_str = if info.channels == 1 { "Mono" } else { "Stereo" };
         Line::from(vec![
             Span::styled(" File: ", Style::default().fg(Color::DarkGray)),
