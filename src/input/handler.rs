@@ -1,3 +1,5 @@
+use std::path::Path;
+
 use ratatui::crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
 
 use crate::app::{Action, AppMode, AppState, PanelFocus};
@@ -24,7 +26,17 @@ fn handle_file_picker(key: KeyEvent, app: &mut AppState) -> Option<Action> {
             if path.is_empty() {
                 None
             } else {
-                Some(Action::LoadFile(path))
+                // #6: Validate path before loading — reject obviously invalid paths.
+                let p = Path::new(&path);
+                if !p.exists() {
+                    app.status_message = Some(format!("File not found: {path}"));
+                    None
+                } else if !p.is_file() {
+                    app.status_message = Some("Path is not a file".to_string());
+                    None
+                } else {
+                    Some(Action::LoadFile(path))
+                }
             }
         }
         KeyCode::Backspace => {
@@ -51,9 +63,11 @@ fn handle_normal(key: KeyEvent, app: &mut AppState) -> Option<Action> {
         }
         KeyCode::Tab => {
             app.focus = app.focus.next();
-            // Clamp selected_slider when switching panels
+            // #8: Always clamp selected_slider, including when count is 0.
             let count = app.focused_slider_count();
-            if count > 0 && app.selected_slider >= count {
+            if count == 0 {
+                app.selected_slider = 0;
+            } else if app.selected_slider >= count {
                 app.selected_slider = count - 1;
             }
             None

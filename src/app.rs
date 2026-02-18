@@ -61,11 +61,18 @@ pub struct SliderDef {
 
 impl SliderDef {
     /// Adjust the slider value by `delta` steps, clamping to [min, max].
+    ///
+    /// Step must be positive (enforced at construction via `new()`).
     pub fn adjust(&mut self, steps: f64) {
+        if self.step <= 0.0 || !self.step.is_finite() {
+            return; // #5: guard against division by zero / NaN
+        }
         self.value = (self.value + steps * self.step).clamp(self.min, self.max);
-        // Round to avoid floating-point drift.
+        // #9: Round to step grid to prevent floating-point drift accumulation.
         let precision = (1.0 / self.step).round();
-        self.value = (self.value * precision).round() / precision;
+        if precision > 0.0 && precision.is_finite() {
+            self.value = (self.value * precision).round() / precision;
+        }
     }
 
     /// Fraction [0.0, 1.0] representing where the value sits in the range.

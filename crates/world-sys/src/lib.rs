@@ -119,9 +119,12 @@ extern "C" {
 ///
 /// # Safety
 ///
-/// `init_fn` must fully initialize the pointed-to struct.
+/// - `init_fn` must fully initialize every field of `T` (no partial init).
+/// - `T` must be `#[repr(C)]` and match the C struct layout exactly.
+/// - The WORLD library version must match the vendored headers in `world-src/`.
+///   If the C struct gains new fields, this will produce UB from uninitialized memory.
 pub(crate) unsafe fn init_option<T>(init_fn: unsafe extern "C" fn(*mut T)) -> T {
-    let mut opt = MaybeUninit::<T>::uninit();
+    let mut opt = MaybeUninit::<T>::zeroed(); // #15: zero-init as defense-in-depth
     init_fn(opt.as_mut_ptr());
     opt.assume_init()
 }
@@ -131,12 +134,13 @@ pub(crate) unsafe fn init_option<T>(init_fn: unsafe extern "C" fn(*mut T)) -> T 
 ///
 /// # Safety
 ///
-/// `init_fn` must fully initialize the pointed-to struct.
+/// Same invariants as [`init_option`]. Additionally, `fs` must be a valid
+/// sample rate (positive, reasonable value like 8000–192000).
 pub(crate) unsafe fn init_option_with_fs<T>(
     init_fn: unsafe extern "C" fn(c_int, *mut T),
     fs: c_int,
 ) -> T {
-    let mut opt = MaybeUninit::<T>::uninit();
+    let mut opt = MaybeUninit::<T>::zeroed(); // #15: zero-init as defense-in-depth
     init_fn(fs, opt.as_mut_ptr());
     opt.assume_init()
 }

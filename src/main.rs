@@ -22,8 +22,14 @@ struct TerminalGuard;
 
 impl Drop for TerminalGuard {
     fn drop(&mut self) {
-        let _ = disable_raw_mode();
-        let _ = stdout().execute(LeaveAlternateScreen);
+        // #18: Log errors instead of silently ignoring — a corrupted terminal is worse
+        // than a warning on stderr.
+        if let Err(e) = disable_raw_mode() {
+            eprintln!("warning: failed to disable raw mode: {e}");
+        }
+        if let Err(e) = stdout().execute(LeaveAlternateScreen) {
+            eprintln!("warning: failed to leave alternate screen: {e}");
+        }
     }
 }
 
@@ -195,6 +201,13 @@ fn main() -> io::Result<()> {
 /// Decode and start playback for a file. Updates app state and returns the cpal Stream.
 fn load_file(path: &str, app: &mut AppState) -> Result<cpal::Stream, Box<dyn std::error::Error>> {
     let path = Path::new(path);
+    // #14: Pre-check file existence for a clearer error message.
+    if !path.exists() {
+        return Err(format!("file not found: {}", path.display()).into());
+    }
+    if !path.is_file() {
+        return Err(format!("not a file: {}", path.display()).into());
+    }
     let audio_data = audio::decoder::decode_file(path)?;
 
     let file_info = FileInfo {

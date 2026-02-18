@@ -1,7 +1,7 @@
 use cpal::traits::{DeviceTrait, HostTrait, StreamTrait};
 use cpal::{SampleFormat, Stream, StreamConfig};
 use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
-use std::sync::Arc;
+use std::sync::{Arc, RwLock};
 
 use super::decoder::AudioData;
 
@@ -32,26 +32,29 @@ impl PlaybackState {
     /// Toggle play/pause. Returns the new playing state.
     pub fn toggle_playing(&self) -> bool {
         // fetch_xor is atomic — no TOCTOU race with the audio callback.
-        !self.playing.fetch_xor(true, Ordering::Relaxed)
+        !self.playing.fetch_xor(true, Ordering::Release)
     }
 
     /// Seek by a signed sample offset, clamped to [0, max_samples].
     pub fn seek_by_samples(&self, offset: isize, max_samples: usize) {
-        let current = self.position.load(Ordering::Relaxed);
-        let new_pos = (current as isize + offset).clamp(0, max_samples as isize) as usize;
-        self.position.store(new_pos, Ordering::Relaxed);
+        // Use Acquire/Release to synchronize with the audio callback thread.
+        let current = self.position.load(Ordering::Acquire);
+        let new_pos = (current as isize).saturating_add(offset).clamp(0, max_samples as isize) as usize;
+        self.position.store(new_pos, Ordering::Release);
     }
 
     /// Seek by seconds. `channels` is needed to convert to interleaved sample offset.
     pub fn seek_by_secs(&self, secs: f64, sample_rate: u32, channels: u16, max_samples: usize) {
-        let offset = (secs * sample_rate as f64 * channels as f64) as isize;
+        // #4: Clamp the float product before casting to isize to prevent overflow.
+        let raw = secs * sample_rate as f64 * channels as f64;
+        let offset = raw.clamp(isize::MIN as f64, isize::MAX as f64) as isize;
         self.seek_by_samples(offset, max_samples);
     }
 
     /// Current playback time in seconds.
     #[must_use]
     pub fn current_time_secs(&self, sample_rate: u32, channels: u16) -> f64 {
-        let pos = self.position.load(Ordering::Relaxed);
+        let pos = self.position.load(Ordering::Acquire);
         if sample_rate == 0 || channels == 0 {
             return 0.0;
         }
@@ -72,12 +75,13 @@ impl std::fmt::Display for PlaybackError {
 impl std::error::Error for PlaybackError {}
 
 /// Context shared with the audio callback closure.
+///
+/// `audio` is behind an `RwLock` so the main thread can atomically swap in new
+/// `AudioData` (e.g. on file reload) without invalidating the callback reference.
 struct CallbackContext {
-    audio: Arc<AudioData>,
+    audio: Arc<RwLock<Arc<AudioData>>>,
     playing: Arc<AtomicBool>,
     position: Arc<AtomicUsize>,
-    total_samples: usize,
-    audio_channels: u16,
     device_channels: u16,
 }
 
@@ -105,10 +109,8 @@ pub fn start_playback(
     let ctx = CallbackContext {
         playing: Arc::clone(&state.playing),
         position: Arc::clone(&state.position),
-        total_samples: audio.samples.len(),
-        audio_channels: audio.channels,
         device_channels: config.channels,
-        audio,
+        audio: Arc::new(RwLock::new(audio)),
     };
 
     let stream = match sample_format {
@@ -126,7 +128,7 @@ pub fn start_playback(
         .play()
         .map_err(|e| PlaybackError(format!("failed to start stream: {e}")))?;
 
-    state.playing.store(true, Ordering::Relaxed);
+    state.playing.store(true, Ordering::Release);
 
     Ok((stream, state))
 }
@@ -199,29 +201,46 @@ fn write_audio_data<T: cpal::SizedSample + cpal::FromSample<f32>>(
     output: &mut [T],
     ctx: &CallbackContext,
 ) {
-    if !ctx.playing.load(Ordering::Relaxed) {
+    let silence = T::from_sample(0.0f32);
+
+    // Use Acquire to synchronize with main-thread Release stores.
+    if !ctx.playing.load(Ordering::Acquire) {
         for sample in output.iter_mut() {
-            *sample = T::from_sample(0.0f32);
+            *sample = silence;
         }
         return;
     }
 
-    let mut pos = ctx.position.load(Ordering::Relaxed);
-    let ac = ctx.audio_channels as usize;
-    let dc = ctx.device_channels as usize;
-    let samples = &ctx.audio.samples;
+    // Acquire the read lock; if poisoned or contended during reload, output silence.
+    let audio_guard = match ctx.audio.try_read() {
+        Ok(guard) => guard,
+        Err(_) => {
+            for sample in output.iter_mut() {
+                *sample = silence;
+            }
+            return;
+        }
+    };
 
+    let samples = &audio_guard.samples;
+    let ac = audio_guard.channels as usize;
+    let dc = ctx.device_channels as usize;
+    let total_samples = samples.len();
+
+    // #10: Explicit guard — ac and dc must be positive for modulo/division.
     if ac == 0 || dc == 0 {
         for sample in output.iter_mut() {
-            *sample = T::from_sample(0.0f32);
+            *sample = silence;
         }
         return;
     }
 
+    let mut pos = ctx.position.load(Ordering::Acquire);
+
     for frame in output.chunks_mut(dc) {
-        if pos >= ctx.total_samples {
+        if pos >= total_samples {
             for sample in frame.iter_mut() {
-                *sample = T::from_sample(0.0f32);
+                *sample = silence;
             }
             continue;
         }
@@ -229,7 +248,7 @@ fn write_audio_data<T: cpal::SizedSample + cpal::FromSample<f32>>(
         for (dev_ch, sample) in frame.iter_mut().enumerate() {
             let src_ch = dev_ch % ac;
             let idx = pos + src_ch;
-            let val = if idx < ctx.total_samples {
+            let val = if idx < total_samples {
                 samples[idx]
             } else {
                 0.0f32
@@ -239,5 +258,5 @@ fn write_audio_data<T: cpal::SizedSample + cpal::FromSample<f32>>(
         pos += ac;
     }
 
-    ctx.position.store(pos, Ordering::Relaxed);
+    ctx.position.store(pos, Ordering::Release);
 }
