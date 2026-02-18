@@ -1,0 +1,17 @@
+[workspace]
+members = [".", "crates/world-sys"]
+
+[package]
+name = "voiceforge"
+version = "0.1.0"
+edition = "2021"
+license = "GPL-3.0-or-later"
+
+[dependencies]
+world-sys = { path = "crates/world-sys" }
+cpal = "0.17"
+symphonia = { version = "0.5", features = ["mp3", "wav", "pcm", "flac"] }
+ratatui = "0.30"
+
+[dev-dependencies]
+hound = "3.5"
