@@ -184,9 +184,17 @@ pub fn decode_file(path: &Path) -> Result<AudioData, DecoderError> {
         return Err(DecoderError::Decode("no audio samples decoded".into()));
     }
 
-    Ok(AudioData {
+    let audio = AudioData {
         samples,
         sample_rate,
         channels,
-    })
+    };
+    log::info!(
+        "decoded '{}': {}Hz {} ch {:.1}s",
+        path.display(),
+        sample_rate,
+        channels,
+        audio.duration_secs()
+    );
+    Ok(audio)
 }

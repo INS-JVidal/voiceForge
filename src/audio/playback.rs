@@ -162,7 +162,7 @@ fn build_stream<T: cpal::SizedSample + cpal::FromSample<f32>>(
             move |data: &mut [T], _: &cpal::OutputCallbackInfo| {
                 write_audio_data(data, &ctx);
             },
-            |err| eprintln!("audio stream error: {err}"),
+            |err| log::error!("audio stream error: {err}"),
             None,
         )
         .map_err(|e| PlaybackError(format!("failed to build stream: {e}")))?;

@@ -19,18 +19,41 @@ use voiceforge::dsp::spectrum::{compute_spectrum, extract_window, FFT_SIZE};
 use voiceforge::input::handler::handle_key_event;
 use voiceforge::ui::layout;
 
+/// Initialize file-based logging. All output goes to `voiceforge.log` — never to
+/// stderr/stdout — so the ratatui TUI is never corrupted.
+fn setup_logger() -> Result<(), fern::InitError> {
+    fern::Dispatch::new()
+        .format(|out, message, record| {
+            let secs = std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .map(|d| d.as_secs())
+                .unwrap_or(0);
+            out.finish(format_args!(
+                "[{secs}] [{level:<5}] [{target}] {message}",
+                level = record.level(),
+                target = record.target(),
+            ))
+        })
+        .level(if cfg!(debug_assertions) {
+            log::LevelFilter::Debug
+        } else {
+            log::LevelFilter::Info
+        })
+        .chain(fern::log_file("voiceforge.log")?)
+        .apply()?;
+    Ok(())
+}
+
 /// RAII guard that restores the terminal on drop (including panics).
 struct TerminalGuard;
 
 impl Drop for TerminalGuard {
     fn drop(&mut self) {
-        // #18: Log errors instead of silently ignoring — a corrupted terminal is worse
-        // than a warning on stderr.
         if let Err(e) = disable_raw_mode() {
-            eprintln!("warning: failed to disable raw mode: {e}");
+            log::warn!("failed to disable raw mode: {e}");
         }
         if let Err(e) = stdout().execute(LeaveAlternateScreen) {
-            eprintln!("warning: failed to leave alternate screen: {e}");
+            log::warn!("failed to leave alternate screen: {e}");
         }
     }
 }
@@ -40,6 +63,10 @@ const RESYNTH_DEBOUNCE: Duration = Duration::from_millis(150);
 const EFFECTS_DEBOUNCE: Duration = Duration::from_millis(80);
 
 fn main() -> io::Result<()> {
+    // Initialize logging before anything else. If it fails (e.g., can't create
+    // the log file), silently continue — the app should not abort for logging.
+    let _ = setup_logger();
+
     // L-1: Register SIGINT handler so we exit cleanly (TerminalGuard::drop runs).
     let sigint = Arc::new(std::sync::atomic::AtomicBool::new(false));
     signal_hook::flag::register(signal_hook::consts::SIGINT, Arc::clone(&sigint))

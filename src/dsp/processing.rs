@@ -88,8 +88,10 @@ fn run_analyze(
 ) -> bool {
     let _ = result_tx.send(ProcessingResult::Status("Analyzing...".into()));
     *sample_rate = audio.sample_rate;
+    log::info!("analyze: {} samples @ {}Hz", audio.samples.len(), audio.sample_rate);
     match world::analyze(audio) {
         Ok(params) => {
+            log::info!("analyze: done — {} f0 frames", params.f0.len());
             *cached_params = Some(params);
             let mono = world::to_mono(audio);
             *original_mono = Some(mono.clone());
@@ -98,6 +100,7 @@ fn run_analyze(
             true
         }
         Err(e) => {
+            log::error!("analyze: failed — {e}");
             let _ = result_tx.send(ProcessingResult::Status(format!("Analysis error: {e}")));
             false
         }
@@ -114,6 +117,7 @@ fn run_resynthesize(
     sample_rate: u32,
     result_tx: &Sender<ProcessingResult>,
 ) -> bool {
+    log::debug!("resynthesize: starting");
     let world_audio = if latest_world.is_neutral() {
         if let Some(ref mono) = original_mono {
             mono.clone()
@@ -131,6 +135,7 @@ fn run_resynthesize(
         match world::synthesize(&modified, sample_rate) {
             Ok(audio) => audio,
             Err(e) => {
+                log::error!("resynthesize: failed — {e}");
                 let _ = result_tx.send(ProcessingResult::Status(format!("Synthesis error: {e}")));
                 return false;
             }
@@ -179,6 +184,7 @@ fn processing_loop(cmd_rx: Receiver<ProcessingCommand>, result_tx: Sender<Proces
                 } else {
                     "Internal error: processing thread panicked".to_string()
                 };
+                log::error!("processing thread caught panic: {msg}");
                 let _ = result_tx_panic.send(ProcessingResult::Status(msg));
                 cached_params = None;
                 original_mono = None;
