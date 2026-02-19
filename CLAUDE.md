@@ -100,3 +100,107 @@ The project follows phases P0–P8 defined in `plans/initial_plan.md`. Reports i
 ### Test Count
 
 18 tests: 4 decoder + 11 WORLD FFI + 3 modifier
+
+## General Rules for Implementation
+
+### Planning & Execution
+
+When asked to implement a plan:
+- **Start coding immediately.** Do NOT enter extended planning mode or repeatedly update plan files before writing code.
+- **Keep planning brief** — under 2 minutes of analysis, then begin implementation.
+- **For multi-phase requests** — implement one phase per session. Break "P5, P6, review, commit" into separate atomic requests.
+  - ✓ Good: "Implement P5. After tests pass, commit and push. Do NOT start P6."
+  - ✗ Avoid: "Implement P5 and P6, then review, then commit."
+- **Commit working code early and often** — don't wait until end of session. If work is complete and tests pass, commit immediately.
+- **If a plan already exists** (in `plans/` or `implementations/`), read it and execute without re-planning.
+
+### Debugging & Problem Solving
+
+- **Commit to one approach and see it through** before switching strategies.
+- **Do not waffle** between multiple fix strategies. If the first approach fails:
+  - Explain concisely why it failed
+  - Propose ONE alternative
+  - Implement and test that one
+- **Iterate in a loop:** Change code → Run tests → Analyze failure → Adjust → Repeat (up to 10 times if necessary).
+- **Document assumptions** in code comments when making non-obvious decisions.
+
+## Build & Test
+
+### Pre-Commit Validation
+
+Before every commit, run:
+```bash
+cargo check              # Quick syntax check
+cargo clippy --all-targets -- -D warnings    # Lint, fail on warnings
+cargo test --all-targets # Run all tests
+```
+
+**Goal:** Zero warnings, all tests passing before commit. This catches buggy first implementations at the gate rather than in back-and-forth debugging cycles.
+
+### Test-Driven Bug Fixes
+
+When fixing a bug:
+1. Write a **failing test** that reproduces the bug (it MUST fail initially)
+2. Run `cargo test` to confirm it fails
+3. Implement the minimal fix
+4. Run `cargo test --all-targets` after each edit
+5. Iterate until all tests pass (including the new regression test)
+6. Run `cargo clippy --all-targets -- -D warnings`
+7. Commit with message: `fix: [description]`
+
+## Git & GitHub
+
+### Repository Operations
+
+- Use `gh` CLI directly for all GitHub operations (repo creation, pushing, PRs, etc.)
+- **Do not ask for confirmation** on git operations — execute autonomously
+- When creating a new remote:
+  ```bash
+  gh repo create USERNAME/REPO --public --source=. --remote=origin --push
+  ```
+- Always push after committing: `git push origin master`
+
+### Commit Standards
+
+- Use conventional commit format: `type: description`
+  - `feat:` new feature
+  - `fix:` bug fix
+  - `refactor:` code restructuring
+  - `test:` test additions or updates
+  - `docs:` documentation
+  - `ci:` CI/CD changes
+- Commit message should explain the "why," not just the "what"
+- Keep commits atomic — one logical change per commit
+
+## Environment (WSL2-Specific)
+
+### Audio Configuration
+
+- WSL2 requires PulseAudio for cpal playback
+- WSLg must be active for X11 forwarding
+- Verify: `pactl info` should show `Server Name: pulseaudio`
+- Configure: `echo -e "pcm.default pulse\nctl.default pulse" > ~/.asoundrc`
+
+### Browser & GUI Operations
+
+- `xdg-open` on native Linux may not work in WSL2
+- For browser opening in WSL2, prefer: `wslview <URL>` or `powershell.exe Start-Process <URL>`
+- **Known domains:**
+  - Astro blog domain: `prompt-lucido.com` (NOT `promptlucido.com`)
+  - GitHub account: `INS-JVidal`
+
+### Terminal Multiplexers
+
+- Some features (like terminal title get/set) may be intercepted by zellij or tmux
+- If testing terminal queries, check `$ZELLIJ` and `$TMUX` env vars
+- Behavior may differ in multiplexer vs bare terminal
+
+## Token Limit & Session Management
+
+- **Break mega-sessions into atomic units** — each focused on one plan phase or feature
+- **Verify completion criteria before starting next phase:**
+  - `cargo test --all-targets` passes
+  - `cargo clippy --all-targets -- -D warnings` passes
+  - One logical commit made and pushed
+- **If near token limit** with more work remaining, stop, commit, and ask user to start a new session
+- Target: ~90% of session for implementation, 10% for review/verification/commit
