@@ -112,12 +112,17 @@ fn render_unicode_fallback(frame: &mut Frame, area: Rect, app: &AppState) {
         let fft_size = 2048.0;
 
         // Frequency labels: (freq_hz, short_label)
+        // More labels are included; overlap prevention will filter by available screen width.
         let freq_labels = [
+            (50.0, "50"),
             (100.0, "100"),
+            (200.0, "200"),
             (500.0, "500"),
             (1000.0, "1k"),
+            (2000.0, "2k"),
             (5000.0, "5k"),
             (10000.0, "10k"),
+            (15000.0, "15k"),
             (20000.0, "20k"),
         ];
 
