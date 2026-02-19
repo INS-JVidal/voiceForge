@@ -73,8 +73,9 @@ WORLD analysis is **offline** (~2-5s per minute of audio). Results are cached in
 - `src/dsp/processing.rs` — `ProcessingHandle` (spawn/send/try_recv/shutdown), background thread with command drain and neutral-slider shortcut
 - `src/audio/export.rs` — WAV export via hound crate
 - `src/ui/spectrum.rs` — FFT-based spectrum visualization with frequency labels (GPU pixel rendering not functional in WSL2)
+- `src/ui/eq_panel.rs` — 12-band graphic EQ rendering; shows focus-conditional styling (▸ marker and Cyan labels only when focused)
 - `src/ui/` — ratatui layout, slider widget, spectrum visualization (with FFT), transport bar, status bar, file picker (scrollable 5-row window)
-- `src/input/handler.rs` — keyboard event handler, returns `Option<Action>`. Key bindings: `q`/`Esc` quit, `Space` play/pause, `Tab` cycle focus, `Up`/`Down` select slider, `Left`/`Right` adjust slider or seek (Transport), `[`/`]` seek ±5s, `Home`/`End` jump to start/end, `a` A/B toggle, `r` loop toggle, `o` open file
+- `src/input/handler.rs` — keyboard event handler, returns `Option<Action>`. Key bindings: `q`/`Esc` quit, `Space` play/pause, `Tab` cycle focus, `Up`/`Down` (WORLD: select slider, EQ: boost/cut ±0.5dB), `Left`/`Right` (WORLD: adjust slider, EQ: navigate bands), `Shift+←/→` fine-adjust, `[`/`]` seek ±5s, `Home`/`End` jump start/end, `d` reset, `a` A/B toggle, `r` loop toggle, `s` export, `o` open file
 - `crates/world-sys/` — FFI bindings; `analyze()` panics on invalid input, `synthesize()` returns `Result<Vec<f64>, WorldError>`
 
 ## Important Design Decisions
@@ -86,6 +87,7 @@ WORLD analysis is **offline** (~2-5s per minute of audio). Results are cached in
 - **Debounced resynthesis**: 150ms debounce on slider changes. Processing thread drains stale `Resynthesize` commands, keeping only the latest.
 - **Buffer swap via RwLock**: `swap_audio()` replaces the `Arc<AudioData>` inside the stream's `RwLock` — glitch-free, O(1). `rebuild_stream` is only used as a fallback if `audio_lock` is unavailable. Both `start_playback` and `rebuild_stream` expose the `audio_lock` handle in `PlaybackState`.
 - **world_sys error handling**: `synthesize()` returns `Result` (allocation guard, param validation). `analyze()` panics on invalid input (programmer error). Processing thread sends status message on synthesis failure.
+- **EQ panel focus-conditional styling**: The 12-band graphic EQ panel renders the `▸` center-line marker and Cyan label colors **only when the EQ panel has focus**. When unfocused, all bands show `─` with gray labels. This eliminates visual deception and clearly indicates to the user which panel will respond to Up/Down/Left/Right key presses. Bars themselves (Cyan for boost, Red for cut) remain visible regardless of focus, showing actual EQ state.
 
 ## Implementation Phases
 
@@ -105,7 +107,7 @@ The project follows phases P0–P8 defined in `plans/initial_plan.md`. Reports i
 
 ### Test Count
 
-56+ tests: 11 WORLD FFI + 7 effects + 6 spectrum + 10 decoder + 6 playback + 5 modifier + 3 export + 4 lib integration
+62 tests: 11 WORLD FFI + 7 effects + 6 spectrum + 10 decoder + 6 playback + 5 modifier + 3 export + 4 lib integration + 10 misc
 
 ## General Rules for Implementation
 
