@@ -74,17 +74,11 @@ fn render_unicode_fallback(frame: &mut Frame, area: Rect, app: &AppState) {
             } else {
                 ' '
             };
-            // Color by row position: saturated punk gradient
-            // Bottom (0-50%): vivid violet (LightMagenta)
-            // Middle (50-75%): vivid electric blue (LightBlue)
-            // Top (75-100%): vivid bright green (LightGreen)
-            let color = if row_ratio >= 0.75 {
-                Color::LightGreen
-            } else if row_ratio >= 0.5 {
-                Color::LightBlue
-            } else {
-                Color::LightMagenta
-            };
+            // True color punk gradient: smooth interpolation
+            // 0.0 (bottom) → #3D0066 deep violet
+            // 0.5 (mid) → #CC00FF electric purple
+            // 1.0 (top) → #FF0099 neon pink
+            let color = punk_gradient_color(row_ratio);
             spans.push(Span::styled(
                 ch.to_string(),
                 Style::default().fg(color),
@@ -95,4 +89,35 @@ fn render_unicode_fallback(frame: &mut Frame, area: Rect, app: &AppState) {
 
     let paragraph = Paragraph::new(lines);
     frame.render_widget(paragraph, area);
+}
+
+/// Interpolate true color through the punk gradient:
+/// 0.0 (bottom) → #3D0066 deep violet
+/// 0.5 (mid) → #CC00FF electric purple
+/// 1.0 (top) → #FF0099 neon pink
+fn punk_gradient_color(frac: f32) -> Color {
+    let frac = frac.clamp(0.0, 1.0);
+    let (r, g, b) = if frac < 0.5 {
+        let t = frac * 2.0;
+        // deep violet #3D0066 → electric purple #CC00FF
+        (
+            lerp(0x3D, 0xCC, t as f64),
+            lerp(0x00, 0x00, t as f64),
+            lerp(0x66, 0xFF, t as f64),
+        )
+    } else {
+        let t = (frac - 0.5) * 2.0;
+        // electric purple #CC00FF → neon pink #FF0099
+        (
+            lerp(0xCC, 0xFF, t as f64),
+            lerp(0x00, 0x00, t as f64),
+            lerp(0xFF, 0x99, t as f64),
+        )
+    };
+    Color::Rgb(r, g, b)
+}
+
+/// Linear interpolation between two u8 values.
+fn lerp(a: u8, b: u8, t: f64) -> u8 {
+    (a as f64 + (b as f64 - a as f64) * t).round() as u8
 }
