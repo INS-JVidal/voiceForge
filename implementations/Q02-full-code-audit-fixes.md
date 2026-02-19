@@ -39,24 +39,24 @@
 - **M-13**: Compressor test now tests two signals at distinct amplitudes and verifies the output ratio is smaller than the input ratio.
 - **M-14**: `default_export_path` loop changed from `1_u32..` to `1_u32..=9999` with fallback.
 
-### Low (10/13 — 3 deferred)
+### Low (13/13)
 
 - **L-1**: SIGINT handler registered via `signal_hook::flag::register` — sets an `AtomicBool` checked in the main loop for clean exit.
 - **L-2**: `to_mono()` with `channels == 0` now returns empty mono `AudioData`.
+- **L-3**: Added 10 boundary condition tests for `PlaybackState` in `tests/test_playback.rs` — covers seek with `sample_rate = 0`, negative seek from position 0, large offsets, channel alignment, and loop toggle.
 - **L-5**: Duplicate `hound` in `[dev-dependencies]` removed.
 - **L-6**: Added `[profile.release]` with `opt-level = 3`, `lto = true`, `codegen-units = 1`.
 - **L-7**: Spectrum display bin mapping changed to quadratic scaling that includes bin 0 (DC).
 - **L-8**: Documented compressor makeup gain behavior (amplifies noise floor below threshold).
+- **L-9**: All export tests migrated to `tempfile::TempDir` for automatic panic-safe cleanup. Added `tempfile = "3.25.0"` as dev-dependency.
+- **L-10**: File picker and save dialog now support horizontal scrolling for long paths via shared `render_input_line()` function.
+- **L-11**: Full cursor navigation in text input fields — Left/Right, Home/End, Delete, and insert-at-cursor via `handle_text_input()` helper in `input/handler.rs`.
 - **L-12**: Status messages now auto-clear after 5 seconds via `status_message_time` field and `set_status()` helper.
 - **L-13**: `build.rs` now enables C++ warnings with targeted suppressions for known benign patterns.
 
-### Deferred
+### Accepted As-Is
 
-- **L-3** (playback boundary tests): Would require test infrastructure for `PlaybackState` — deferred.
-- **L-4** (WAV quantization): Documented behavior, no code change needed for 0.003 dB.
-- **L-9** (tempfile crate for tests): Would add a dev-dependency for minor cleanup improvement — deferred.
-- **L-10** (long path overflow): Requires significant UI rework — deferred to polish phase.
-- **L-11** (cursor movement in text input): Requires significant UI rework — deferred to polish phase.
+- **L-4** (WAV quantization): `* 32767.0` symmetric mapping loses 0.003 dB of dynamic range — documented, no code change needed.
 
 ## Architecture Changes
 
@@ -64,8 +64,12 @@
 - `swap_audio()`: Signature changed to accept optional position update for atomic buffer+position swap.
 - `world::analyze()`: Changed from panicking to `Result<WorldParams, WorldError>` return type.
 - `FileInfo`: Added `original_channels` field.
-- `AppState`: Added `status_message_time` field and `set_status()` method.
+- `AppState`: Added `status_message_time` field, `input_cursor` field, and `set_status()` method.
+- `input/handler.rs`: New `handle_text_input()` helper for cursor-aware text editing (Left/Right/Home/End/Delete/Backspace/Char).
+- `ui/file_picker.rs`: New shared `render_input_line()` function for cursor-aware rendering with horizontal scrolling, used by both file picker and save dialog.
+- `tests/test_playback.rs`: New test file with 10 boundary condition tests for `PlaybackState`.
+- `tests/test_export.rs`: Migrated to `tempfile::TempDir` for automatic cleanup.
 
 ## Test Results
 
-All 45 tests passing. Zero clippy warnings.
+All 55 tests passing. Zero clippy warnings.
