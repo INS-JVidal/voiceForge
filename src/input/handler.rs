@@ -158,12 +158,14 @@ fn update_file_picker_matches(app: &mut AppState) {
         _ => a.1.cmp(&b.1),
     });
 
-    // Keep first 5 matches
+    // Store all filtered matches
     app.file_picker_matches = matches
         .into_iter()
         .map(|(_, path)| path)
-        .take(5)
         .collect();
+
+    // Reset scroll offset when list is recomputed
+    app.file_picker_scroll = 0;
 
     // Clamp selection to valid range
     if let Some(sel) = app.file_picker_selected {
@@ -234,6 +236,7 @@ fn handle_file_picker(key: KeyEvent, app: &mut AppState) -> Option<Action> {
             app.file_picker_input.clear();
             app.input_cursor = 0;
             app.file_picker_matches.clear();
+            app.file_picker_scroll = 0;
             app.file_picker_selected = None;
             None
         }
@@ -246,6 +249,13 @@ fn handle_file_picker(key: KeyEvent, app: &mut AppState) -> Option<Action> {
                     }
                     _ => {}
                 }
+                // Adjust scroll to keep selection visible in 5-row window
+                const VISIBLE: usize = 5;
+                if let Some(sel) = app.file_picker_selected {
+                    if sel >= app.file_picker_scroll + VISIBLE {
+                        app.file_picker_scroll = sel + 1 - VISIBLE;
+                    }
+                }
             }
             None
         }
@@ -254,6 +264,12 @@ fn handle_file_picker(key: KeyEvent, app: &mut AppState) -> Option<Action> {
                 Some(0) => app.file_picker_selected = None,
                 Some(i) => app.file_picker_selected = Some(i - 1),
                 None => {}
+            }
+            // Adjust scroll to keep selection visible in 5-row window
+            if let Some(sel) = app.file_picker_selected {
+                if sel < app.file_picker_scroll {
+                    app.file_picker_scroll = sel;
+                }
             }
             None
         }
@@ -544,6 +560,7 @@ fn handle_normal(key: KeyEvent, app: &mut AppState) -> Option<Action> {
                 app.input_cursor = app.file_picker_input.len();
                 // Clear file picker matches to avoid visual bleed into save dialog
                 app.file_picker_matches.clear();
+                app.file_picker_scroll = 0;
                 app.file_picker_selected = None;
                 app.mode = AppMode::Saving;
             } else {

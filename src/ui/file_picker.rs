@@ -7,8 +7,9 @@ use ratatui::Frame;
 use crate::app::AppState;
 
 pub fn render(frame: &mut Frame, app: &AppState) {
-    let n_matches = app.file_picker_matches.len();
-    let popup_h: u16 = if n_matches == 0 { 4 } else { (5 + n_matches) as u16 };
+    let total = app.file_picker_matches.len();
+    let n_visible = total.min(5);
+    let popup_h: u16 = if n_visible == 0 { 4 } else { (5 + n_visible) as u16 };
 
     let area = centered_rect(60, popup_h, frame.area());
 
@@ -65,19 +66,44 @@ pub fn render(frame: &mut Frame, app: &AppState) {
     frame.render_widget(Paragraph::new(input_line), input_area);
 
     // Render match area
-    if n_matches > 0 {
+    if n_visible > 0 {
         let mut match_lines = Vec::new();
 
-        // Divider
-        let divider = "─".repeat(match_area.width as usize);
+        // Divider with scroll indicator
+        let scroll = app.file_picker_scroll;
+        let above = scroll;
+        let below = total.saturating_sub(scroll + n_visible);
+        let width = match_area.width as usize;
+
+        let divider_text = match (above > 0, below > 0) {
+            (false, false) => "─".repeat(width),
+            (true, false) => {
+                let indicator = format!("─ ↑{} ─", above);
+                let padding = width.saturating_sub(indicator.len());
+                format!("{}{}", indicator, "─".repeat(padding))
+            }
+            (false, true) => {
+                let indicator = format!("─ ↓{} ─", below);
+                let padding = width.saturating_sub(indicator.len());
+                format!("{}{}", indicator, "─".repeat(padding))
+            }
+            (true, true) => {
+                let indicator = format!("─ ↑{} ↓{} ─", above, below);
+                let padding = width.saturating_sub(indicator.len());
+                format!("{}{}", indicator, "─".repeat(padding))
+            }
+        };
+
         match_lines.push(Line::from(Span::styled(
-            divider,
+            divider_text,
             Style::default().fg(Color::DarkGray),
         )));
 
-        // Match items
-        for (i, match_path) in app.file_picker_matches.iter().enumerate() {
-            let is_selected = app.file_picker_selected == Some(i);
+        // Match items (windowed slice)
+        let window_end = (scroll + n_visible).min(total);
+        for abs_idx in scroll..window_end {
+            let match_path = &app.file_picker_matches[abs_idx];
+            let is_selected = app.file_picker_selected == Some(abs_idx);
             let is_dir = match_path.ends_with('/');
 
             let prefix = if is_selected { "▶ " } else { "  " };
@@ -98,7 +124,7 @@ pub fn render(frame: &mut Frame, app: &AppState) {
             };
 
             // Truncate path if it's too long
-            let max_path_len = (match_area.width as usize).saturating_sub(3);
+            let max_path_len = width.saturating_sub(3);
             let display_path = if match_path.len() > max_path_len {
                 format!("{}…", &match_path[..max_path_len - 1])
             } else {

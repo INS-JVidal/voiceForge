@@ -123,8 +123,10 @@ pub struct AppState {
     pub file_picker_input: String,
     /// L-11: Cursor position within file_picker_input (byte offset).
     pub input_cursor: usize,
-    /// File picker autocomplete: up to 5 matching file/directory paths; dirs have trailing '/'.
+    /// File picker autocomplete: matching file/directory paths; dirs have trailing '/'.
     pub file_picker_matches: Vec<String>,
+    /// Scroll offset for the file picker list: index of the first visible match row.
+    pub file_picker_scroll: usize,
     /// File picker selection: index into file_picker_matches; None when user is typing or list empty.
     pub file_picker_selected: Option<usize>,
     pub status_message: Option<String>,
@@ -152,6 +154,7 @@ impl AppState {
             file_picker_input: String::new(),
             input_cursor: 0,
             file_picker_matches: Vec::new(),
+            file_picker_scroll: 0,
             file_picker_selected: None,
             status_message: None,
             status_message_time: None,
