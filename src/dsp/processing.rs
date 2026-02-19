@@ -22,7 +22,7 @@ pub enum ProcessingCommand {
 
 /// Results sent from the processing thread back to the main thread.
 pub enum ProcessingResult {
-    AudioReady(AudioData),                            // NEW: decoded audio
+    AudioReady(AudioData, String),                    // decoded audio + path that was decoded
     AnalysisDone(AudioData),
     SynthesisDone(AudioData),
     Status(String),
@@ -62,14 +62,6 @@ impl ProcessingHandle {
         self.result_rx.try_recv().ok()
     }
 
-    /// Shut down the processing thread and wait for it to finish.
-    /// Used for graceful 'q' quit. Always joins to ensure clean exit.
-    pub fn shutdown(mut self) {
-        let _ = self.cmd_tx.send(ProcessingCommand::Shutdown);
-        if let Some(handle) = self.thread.take() {
-            let _ = handle.join();
-        }
-    }
 }
 
 impl Drop for ProcessingHandle {
@@ -223,7 +215,7 @@ fn handle_command(
             match decoder::decode_file(Path::new(&path)) {
                 Ok(audio_data) => {
                     let audio = Arc::new(audio_data.clone());
-                    let _ = result_tx.send(ProcessingResult::AudioReady(audio_data));
+                    let _ = result_tx.send(ProcessingResult::AudioReady(audio_data, path.clone()));
                     // Immediately kick off analysis
                     run_analyze(
                         &audio,
@@ -268,7 +260,7 @@ fn handle_command(
                         match decoder::decode_file(Path::new(&path)) {
                             Ok(audio_data) => {
                                 let audio = Arc::new(audio_data.clone());
-                                let _ = result_tx.send(ProcessingResult::AudioReady(audio_data));
+                                let _ = result_tx.send(ProcessingResult::AudioReady(audio_data, path.clone()));
                                 run_analyze(
                                     &audio,
                                     result_tx,
@@ -325,7 +317,7 @@ fn handle_command(
                         match decoder::decode_file(Path::new(&path)) {
                             Ok(audio_data) => {
                                 let audio = Arc::new(audio_data.clone());
-                                let _ = result_tx.send(ProcessingResult::AudioReady(audio_data));
+                                let _ = result_tx.send(ProcessingResult::AudioReady(audio_data, path.clone()));
                                 run_analyze(
                                     &audio,
                                     result_tx,
@@ -366,6 +358,7 @@ fn handle_command(
                                             let audio = Arc::new(audio_data.clone());
                                             let _ = result_tx.send(ProcessingResult::AudioReady(
                                                 audio_data,
+                                                path.clone(),
                                             ));
                                             run_analyze(
                                                 &audio,

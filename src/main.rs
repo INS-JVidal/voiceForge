@@ -196,23 +196,29 @@ fn main() -> io::Result<()> {
         // Poll for processing results (non-blocking)
         while let Some(result) = processing.try_recv() {
             match result {
-                ProcessingResult::AudioReady(audio_data) => {
-                    let audio = Arc::new(audio_data);
-                    app.processing_status = None; // Clear loading status
-
-                    // Set file info and audio data unconditionally (even if playback fails later).
-                    // File is now considered "loaded" from the UI perspective.
-                    if let Some(ref path) = current_file_path {
-                        if let Some(file_info) = build_file_info(path, &audio) {
-                            app.file_info = Some(file_info);
-                            app.audio_data = Some(Arc::clone(&audio));
-                            // Defer playback start to avoid blocking the result drain
-                            pending_stream_init = Some(audio);
-                        } else {
-                            app.set_status("Failed to build file info".to_string());
-                        }
+                ProcessingResult::AudioReady(audio_data, loaded_path) => {
+                    // Discard if user already switched to a different file
+                    if current_file_path.as_deref() != Some(loaded_path.as_str()) {
+                        log::debug!("AudioReady: discarding stale result for {loaded_path}");
+                        // Continue draining results
                     } else {
-                        app.set_status("Internal error: current_file_path not set".to_string());
+                        let audio = Arc::new(audio_data);
+                        app.processing_status = None; // Clear loading status
+
+                        // Set file info and audio data unconditionally (even if playback fails later).
+                        // File is now considered "loaded" from the UI perspective.
+                        if let Some(ref path) = current_file_path {
+                            if let Some(file_info) = build_file_info(path, &audio) {
+                                app.file_info = Some(file_info);
+                                app.audio_data = Some(Arc::clone(&audio));
+                                // Defer playback start to avoid blocking the result drain
+                                pending_stream_init = Some(audio);
+                            } else {
+                                app.set_status("Failed to build file info".to_string());
+                            }
+                        } else {
+                            app.set_status("Internal error: current_file_path not set".to_string());
+                        }
                     }
                 }
                 ProcessingResult::AnalysisDone(mono_original) => {
@@ -434,14 +440,11 @@ fn main() -> io::Result<()> {
         }
     }
 
-    // Q06: Check exit reason — graceful vs force quit
-    if sigint.load(Ordering::Relaxed) {
-        // Ctrl+C: detach the processing thread (non-blocking, Drop handles it)
-        drop(processing);
-    } else {
-        // Normal quit: graceful shutdown (wait for thread)
-        processing.shutdown();
-    }
+    // Signal the processing thread to shut down, then let Drop detach non-blocking
+    // This ensures the main thread is never blocked waiting for thread completion,
+    // allowing the terminal guard to drop immediately and restore terminal state.
+    processing.send(ProcessingCommand::Shutdown);
+    // processing drops here → Drop impl detaches the JoinHandle (does NOT join)
 
     Ok(())
     // _guard Drop restores terminal
