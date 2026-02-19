@@ -42,8 +42,9 @@ Audio file → symphonia decoder → f32 PCM
   → WORLD analysis (f0, sp, ap)           [processing thread, on file load]
   → Modifier (Vec<Vec<f64>> ops per slider values)
   → WORLD synthesis → f32 PCM             [processing thread, on slider change]
+  → Effects chain (EQ, compression, reverb, filters)
   → playback (cpal)
-  [future: → Effects chain → FFT spectrum]
+  [Spectrum FFT visualization available but GPU rendering does not work reliably in WSL2]
 ```
 
 WORLD analysis is **offline** (~2-5s per minute of audio). Results are cached in the processing thread; resynthesis runs only when sliders change (debounced 150ms). Neutral sliders skip WORLD synthesis and return a mono downmix of the original.
@@ -68,8 +69,11 @@ WORLD analysis is **offline** (~2-5s per minute of audio). Results are cached in
 - `src/audio/playback.rs` — cpal output stream, `PlaybackState` (atomics + `audio_lock`), `start_playback`, `rebuild_stream`, `swap_audio`
 - `src/dsp/world.rs` — f32↔f64 conversion, mono downmix (`to_mono`), thin wrappers around `world_sys::analyze`/`synthesize`
 - `src/dsp/modifier.rs` — `WorldSliderValues` struct, `apply()` with 6 transforms (pitch shift, pitch range, speed, breathiness, formant shift, spectral tilt)
+- `src/dsp/effects.rs` — Effects chain: EQ (12-band), compression, reverb mix, gain, low/high cut filters
 - `src/dsp/processing.rs` — `ProcessingHandle` (spawn/send/try_recv/shutdown), background thread with command drain and neutral-slider shortcut
-- `src/ui/` — ratatui layout, slider widget, spectrum placeholder, transport bar, status bar, file picker
+- `src/audio/export.rs` — WAV export via hound crate
+- `src/ui/spectrum.rs` — FFT-based spectrum visualization with frequency labels (GPU pixel rendering not functional in WSL2)
+- `src/ui/` — ratatui layout, slider widget, spectrum visualization (with FFT), transport bar, status bar, file picker (scrollable 5-row window)
 - `src/input/handler.rs` — keyboard event handler, returns `Option<Action>`. Key bindings: `q`/`Esc` quit, `Space` play/pause, `Tab` cycle focus, `Up`/`Down` select slider, `Left`/`Right` adjust slider or seek (Transport), `[`/`]` seek ±5s, `Home`/`End` jump to start/end, `a` A/B toggle, `r` loop toggle, `o` open file
 - `crates/world-sys/` — FFI bindings; `analyze()` panics on invalid input, `synthesize()` returns `Result<Vec<f64>, WorldError>`
 
@@ -95,11 +99,13 @@ The project follows phases P0–P8 defined in `plans/initial_plan.md`. Reports i
 - **P3b** — Audit integration corrections (API compat fixes after P0–P2 security audit merge) ✓
 - **P4** — A/B comparison toggle (`'a'` key, RwLock swap, proportional position scaling) ✓
 - **P4b** — Enhanced seek navigation (Home/End, Transport arrows) + status_message visibility fix ✓
-- P5–P8 — Remaining (spectrum FFT, effects chain, WAV export, polish)
+- **P5** — Scrollable file picker (5-row window with scroll indicators) ✓
+- **P6+** — Effects chain (EQ, compression, reverb, filters), WAV export, FFT spectrum visualization ✓
+- **WSL2 Known Issue:** GPU pixel spectrum rendering does not work reliably in WSL2; falls back to text-based visualization
 
 ### Test Count
 
-18 tests: 4 decoder + 11 WORLD FFI + 3 modifier
+56+ tests: 11 WORLD FFI + 7 effects + 6 spectrum + 10 decoder + 6 playback + 5 modifier + 3 export + 4 lib integration
 
 ## General Rules for Implementation
 
@@ -194,6 +200,13 @@ When fixing a bug:
 - Some features (like terminal title get/set) may be intercepted by zellij or tmux
 - If testing terminal queries, check `$ZELLIJ` and `$TMUX` env vars
 - Behavior may differ in multiplexer vs bare terminal
+
+### GPU/Graphics Limitations (WSL2)
+
+- **Spectrum Visualization:** GPU pixel rendering (24-bit true color gradient) does not work reliably in WSL2 terminals
+- **Workaround:** Application falls back to text-based frequency labels and ASCII visualization
+- **Note:** Native Linux or other terminals may support full GPU rendering; this is WSL2-specific limitation
+- Development continues with text-based rendering as baseline for WSL2 compatibility
 
 ## Token Limit & Session Management
 
