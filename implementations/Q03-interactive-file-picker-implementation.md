@@ -73,12 +73,24 @@ Replaced the simple `_ => handle_text_input() → None` with explicit key routin
 | `Esc` | Clear mode, input, cursor, matches, selection → return Normal mode |
 | `Down` | Move selection: `None→0`, `i→min(i+1, len-1)`; no-op if empty |
 | `Up` | Move selection: `0→None`, `i→i-1`; no-op if None or empty |
-| `Tab` | If selected dir: set input to path + "/", clear selection, refresh matches; if file: set input to path |
+| `Tab` | **Auto-complete to first match if no selection**, else use selected match. If dir: set input + "/", clear selection, refresh; if file: set input to path |
 | `Enter` (selected dir) | Same as Tab: navigate into directory |
 | `Enter` (selected file) | `precheck_audio_file()` → emit `Action::LoadFile` if OK, else error status |
 | `Enter` (no selection) | Validate raw input with `exists()` + `is_file()`, then `precheck`, emit or error |
 | `Char/Backspace/Delete` | `handle_text_input()` → `update_file_picker_matches()` → reset selection |
 | `Left/Right/Home/End` | `handle_text_input()` only; preserve selection |
+
+**Tab behavior details:**
+```rust
+// If no selection, auto-complete to first match (if any matches exist)
+let match_idx = app.file_picker_selected
+    .or_else(|| if app.file_picker_matches.is_empty() { None } else { Some(0) });
+```
+
+This means:
+- User types `aud` → sees `[audio.wav, audio_2.wav, ...]` → presses Tab → auto-completes to `audio.wav`
+- User types `m` → sees `[music/, main.wav, ...]` → presses Tab → navigates into `music/` directory
+- Already highlighted a match → Tab uses that match (preserves selection)
 
 ### Updated `handle_normal()` Key Arms (`src/input/handler.rs`)
 
@@ -150,8 +162,9 @@ let popup_h: u16 = if n == 0 { 4 } else { (5 + n) as u16 };  // range: 4–10 ro
 ✓ Open picker with `o` → CWD contents appear immediately (up to 5)
 ✓ Type a letter → suggestions update live; selection resets
 ✓ Press `↓`/`↑` → highlight moves through list; `↑` from 0 deselects
-✓ Press `Tab` on directory → input advances to dir path, list refreshes
-✓ Press `Tab` on file → input set to file path (allows preview before Enter)
+✓ Press `Tab` with no selection → auto-completes to first match (dir or file)
+✓ Press `Tab` on highlighted directory → input advances to dir path, list refreshes
+✓ Press `Tab` on highlighted file → input set to file path (allows preview before Enter)
 ✓ Press `Enter` on audio file match → file loads, picker closes
 ✓ Press `Enter` on non-audio file match → status error shown, picker stays open
 ✓ Press `Enter` on unreadable file (permission denied) → status error, stays open

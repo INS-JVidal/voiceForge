@@ -68,7 +68,7 @@ Read first 12 bytes; if no match, reject with error message (but allow raw input
 |-----|--------|
 | Down | `None→0`, `i→min(i+1, len-1)` |
 | Up | `0→None`, `i→i-1` |
-| Tab | Dir: set input + `/`, clear selection, refresh matches; File: set input to path |
+| Tab | If no selection: use first match; if selection: use selected match. Dir: set input + `/`, clear selection, refresh matches; File: set input to path |
 | Enter (selected dir) | Navigate into directory (same as Tab) |
 | Enter (selected file) | Precheck audio format → load if valid, error status if not |
 | Enter (raw input) | Validate path exists + is_file → precheck → load or error |

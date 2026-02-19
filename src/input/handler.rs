@@ -258,7 +258,12 @@ fn handle_file_picker(key: KeyEvent, app: &mut AppState) -> Option<Action> {
             None
         }
         KeyCode::Tab => {
-            if let Some(idx) = app.file_picker_selected {
+            // Determine which match to use: selected index, or first match if no selection
+            let match_idx = app
+                .file_picker_selected
+                .or(if app.file_picker_matches.is_empty() { None } else { Some(0) });
+
+            if let Some(idx) = match_idx {
                 if idx < app.file_picker_matches.len() {
                     let match_path = app.file_picker_matches[idx].clone();
                     if match_path.ends_with('/') {
