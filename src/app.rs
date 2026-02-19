@@ -142,6 +142,8 @@ pub struct AppState {
     pub eq_gains: [f64; 12],
     /// Currently selected EQ band (0-11).
     pub eq_selected_band: usize,
+    /// WORLD bypass: when true, skip WORLD synthesis and route original mono → effects.
+    pub world_bypass: bool,
 }
 
 impl AppState {
@@ -171,6 +173,7 @@ impl AppState {
             spectrum_bins: Vec::new(),
             eq_gains: [0.0; 12],
             eq_selected_band: 0,
+            world_bypass: false,
         }
     }
 
@@ -357,6 +360,7 @@ impl AppState {
             breathiness: s[3].value,
             formant_shift: s[4].value,
             spectral_tilt: s[5].value,
+            bypass: self.world_bypass,
         }
     }
 }

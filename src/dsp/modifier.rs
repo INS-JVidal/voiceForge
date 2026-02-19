@@ -15,6 +15,8 @@ pub struct WorldSliderValues {
     pub formant_shift: f64,
     /// Spectral tilt in dB/octave.
     pub spectral_tilt: f64,
+    /// When true, skip WORLD synthesis and use original mono directly.
+    pub bypass: bool,
 }
 
 impl WorldSliderValues {
@@ -40,6 +42,7 @@ impl Default for WorldSliderValues {
             breathiness: 0.0,
             formant_shift: 0.0,
             spectral_tilt: 0.0,
+            bypass: false,
         }
     }
 }

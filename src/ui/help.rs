@@ -35,6 +35,7 @@ pub fn render(frame: &mut Frame) {
         ("[ / ]", "Seek \u{00b1}5s"),
         ("Home / End", "Jump to start / end"),
         ("r", "Toggle loop"),
+        ("w", "Toggle WORLD bypass (ON/OFF)"),
         ("a", "A/B toggle (original vs processed)"),
         ("s", "Export WAV"),
         ("o", "Open file"),

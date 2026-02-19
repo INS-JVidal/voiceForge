@@ -661,6 +661,15 @@ fn handle_normal(key: KeyEvent, app: &mut AppState) -> Option<Action> {
                 }
             }
         }
+        KeyCode::Char('w') => {
+            app.world_bypass = !app.world_bypass;
+            if app.world_bypass {
+                app.set_status("WORLD bypass ON — effects only".to_string());
+            } else {
+                app.set_status("WORLD bypass OFF — full synthesis".to_string());
+            }
+            Some(Action::Resynthesize)
+        }
         _ => None,
     }
 }

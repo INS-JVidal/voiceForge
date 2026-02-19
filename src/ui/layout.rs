@@ -65,10 +65,15 @@ pub fn render(frame: &mut Frame, app: &mut AppState) {
     } else {
         None
     };
+    let world_title = if app.world_bypass {
+        "WORLD Vocoder [OFF]"
+    } else {
+        "WORLD Vocoder"
+    };
     slider::render(
         frame,
         slider_cols[0],
-        "WORLD Vocoder",
+        world_title,
         &app.world_sliders,
         world_selected,
         app.focus == PanelFocus::WorldSliders,

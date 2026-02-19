@@ -33,7 +33,6 @@ pub struct ProcessingHandle {
     cmd_tx: Sender<ProcessingCommand>,
     result_rx: Receiver<ProcessingResult>,
     thread: Option<thread::JoinHandle<()>>,
-    abandon: bool,                                     // NEW: skip join on drop
 }
 
 impl ProcessingHandle {
@@ -50,7 +49,6 @@ impl ProcessingHandle {
             cmd_tx,
             result_rx,
             thread: Some(thread),
-            abandon: false,
         }
     }
 
@@ -65,32 +63,22 @@ impl ProcessingHandle {
     }
 
     /// Shut down the processing thread and wait for it to finish.
+    /// Used for graceful 'q' quit. Always joins to ensure clean exit.
     pub fn shutdown(mut self) {
         let _ = self.cmd_tx.send(ProcessingCommand::Shutdown);
         if let Some(handle) = self.thread.take() {
             let _ = handle.join();
         }
     }
-
-    /// Abandon the processing thread without waiting (detach on drop).
-    /// Used for non-blocking Ctrl+C exit. The thread dies when the process exits.
-    pub fn abandon(mut self) {
-        self.abandon = true;
-        let _ = self.cmd_tx.send(ProcessingCommand::Shutdown); // signal thread to stop
-        // JoinHandle is dropped in Drop without joining
-    }
 }
 
 impl Drop for ProcessingHandle {
     fn drop(&mut self) {
-        if self.abandon {
-            self.thread.take(); // Drop JoinHandle → detaches thread
-            return;
-        }
-        let _ = self.cmd_tx.send(ProcessingCommand::Shutdown);
-        if let Some(handle) = self.thread.take() {
-            let _ = handle.join();
-        }
+        // Always detach the thread without joining. This ensures that any exit path
+        // (normal 'q' quit, Ctrl+C, or error propagation) immediately frees the UI
+        // for terminal restoration. The processing thread will exit when the process
+        // exits (Shutdown already sent by shutdown() if this was a graceful quit).
+        self.thread.take(); // Drop JoinHandle → detaches, does NOT join
     }
 }
 
@@ -137,7 +125,7 @@ fn run_resynthesize(
     result_tx: &Sender<ProcessingResult>,
 ) -> bool {
     log::debug!("resynthesize: starting");
-    let world_audio = if latest_world.is_neutral() {
+    let world_audio = if latest_world.bypass || latest_world.is_neutral() {
         if let Some(ref mono) = original_mono {
             mono.clone()
         } else {

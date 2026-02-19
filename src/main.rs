@@ -94,6 +94,9 @@ fn main() -> io::Result<()> {
     // Track current file path for LoadFile action
     let mut current_file_path: Option<String> = None;
 
+    // Deferred stream initialization (moved out of result drain to avoid blocking)
+    let mut pending_stream_init: Option<Arc<audio::decoder::AudioData>> = None;
+
     let args: Vec<String> = std::env::args().collect();
     if args.len() >= 2 {
         match load_file(&args[1], &mut app) {
@@ -121,6 +124,42 @@ fn main() -> io::Result<()> {
             if t.elapsed() >= STATUS_TIMEOUT {
                 app.status_message = None;
                 app.status_message_time = None;
+            }
+        }
+
+        // Process pending stream initialization (moved out of result drain to avoid blocking).
+        // This must be at the top of the loop so it can run without blocking sigint checks.
+        if let Some(audio) = pending_stream_init.take() {
+            if let Some(ref _lock) = app.playback.audio_lock {
+                // Rebuild path: we have an existing playback state; just rebuild the stream
+                match audio::playback::rebuild_stream(Arc::clone(&audio), &mut app.playback) {
+                    Ok(stream) => {
+                        _stream = Some(stream);
+                    }
+                    Err(e) => {
+                        app.set_status(format!("Playback error: {e}"));
+                    }
+                }
+            } else {
+                // Initial startup path: create new stream and playback state
+                match audio::playback::start_playback(Arc::clone(&audio)) {
+                    Ok((stream, state)) => {
+                        _stream = Some(stream);
+                        app.playback = state;
+                        let gain_db = app.master_sliders[0].value as f32;
+                        app.playback.live_gain.store(
+                            10.0_f32.powf(gain_db / 20.0).to_bits(),
+                            std::sync::atomic::Ordering::Relaxed,
+                        );
+                        app.playback.loop_enabled.store(
+                            app.loop_enabled,
+                            std::sync::atomic::Ordering::Relaxed,
+                        );
+                    }
+                    Err(e) => {
+                        app.set_status(format!("Playback error: {e}"));
+                    }
+                }
             }
         }
 
@@ -161,30 +200,14 @@ fn main() -> io::Result<()> {
                     let audio = Arc::new(audio_data);
                     app.processing_status = None; // Clear loading status
 
-                    // Build file info from the decoded audio
+                    // Set file info and audio data unconditionally (even if playback fails later).
+                    // File is now considered "loaded" from the UI perspective.
                     if let Some(ref path) = current_file_path {
                         if let Some(file_info) = build_file_info(path, &audio) {
-                            match audio::playback::start_playback(Arc::clone(&audio)) {
-                                Ok((stream, state)) => {
-                                    _stream = Some(stream);
-                                    app.playback = state;
-                                    // Restore live gain and loop from sliders
-                                    let gain_db = app.master_sliders[0].value as f32;
-                                    app.playback.live_gain.store(
-                                        10.0_f32.powf(gain_db / 20.0).to_bits(),
-                                        std::sync::atomic::Ordering::Relaxed,
-                                    );
-                                    app.playback.loop_enabled.store(
-                                        app.loop_enabled,
-                                        std::sync::atomic::Ordering::Relaxed,
-                                    );
-                                    app.file_info = Some(file_info);
-                                    app.audio_data = Some(audio);
-                                }
-                                Err(e) => {
-                                    app.set_status(format!("Playback error: {e}"));
-                                }
-                            }
+                            app.file_info = Some(file_info);
+                            app.audio_data = Some(Arc::clone(&audio));
+                            // Defer playback start to avoid blocking the result drain
+                            pending_stream_init = Some(audio);
                         } else {
                             app.set_status("Failed to build file info".to_string());
                         }
@@ -240,7 +263,7 @@ fn main() -> io::Result<()> {
                         let current_pos = app.playback.position.load(Ordering::Acquire);
                         let clamped_pos = current_pos.min(max_samples);
 
-                        // Swap audio in running stream if we have a lock, else rebuild
+                        // Swap audio in running stream if we have a lock, else defer rebuild
                         if let Some(ref lock) = app.playback.audio_lock {
                             audio::playback::swap_audio(
                                 lock,
@@ -249,18 +272,9 @@ fn main() -> io::Result<()> {
                             );
                             app.audio_data = Some(new_audio);
                         } else {
-                            match audio::playback::rebuild_stream(
-                                Arc::clone(&new_audio),
-                                &mut app.playback,
-                            ) {
-                                Ok(stream) => {
-                                    _stream = Some(stream);
-                                    app.audio_data = Some(new_audio);
-                                }
-                                Err(e) => {
-                                    app.set_status(format!("Playback error: {e}"));
-                                }
-                            }
+                            // Defer stream rebuild to avoid blocking the result drain
+                            pending_stream_init = Some(Arc::clone(&new_audio));
+                            app.audio_data = Some(new_audio);
                         }
                     }
                 }
@@ -422,8 +436,8 @@ fn main() -> io::Result<()> {
 
     // Q06: Check exit reason — graceful vs force quit
     if sigint.load(Ordering::Relaxed) {
-        // Ctrl+C: abandon the processing thread (detach, non-blocking)
-        processing.abandon();
+        // Ctrl+C: detach the processing thread (non-blocking, Drop handles it)
+        drop(processing);
     } else {
         // Normal quit: graceful shutdown (wait for thread)
         processing.shutdown();
