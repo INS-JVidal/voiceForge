@@ -2,18 +2,18 @@ use ratatui::layout::{Constraint, Direction, Layout};
 use ratatui::Frame;
 
 use crate::app::{AppMode, AppState, PanelFocus};
-use crate::ui::{file_picker, help, save_dialog, slider, spectrum, status_bar, transport};
+use crate::ui::{eq_panel, file_picker, help, save_dialog, slider, spectrum, status_bar, transport};
 
 pub fn render(frame: &mut Frame, app: &mut AppState) {
     let area = frame.area();
 
     // H-5: Minimum terminal size guard to prevent zero-height render areas.
-    if area.height < 12 || area.width < 40 {
+    if area.height < 16 || area.width < 40 {
         use ratatui::style::{Color, Style};
         use ratatui::text::Span;
         use ratatui::widgets::Paragraph;
         let msg = Paragraph::new(Span::styled(
-            "Terminal too small (min 40×12)",
+            "Terminal too small (min 40×16)",
             Style::default().fg(Color::Red),
         ));
         frame.render_widget(msg, area);
@@ -21,11 +21,11 @@ pub fn render(frame: &mut Frame, app: &mut AppState) {
     }
 
     // Main vertical layout:
-    // [Slider panels + Spectrum] (fill)  |  [Transport] (3)  |  [Status bar] (1)
+    // [Slider panels + EQ panel + Spectrum] (fill)  |  [Transport] (3)  |  [Status bar] (1)
     let vertical = Layout::default()
         .direction(Direction::Vertical)
         .constraints([
-            Constraint::Min(8),    // slider panels + spectrum
+            Constraint::Min(10),   // slider panels + EQ + spectrum
             Constraint::Length(3), // transport
             Constraint::Length(1), // status bar
         ])
@@ -35,18 +35,19 @@ pub fn render(frame: &mut Frame, app: &mut AppState) {
     let transport_area = vertical[1];
     let status_area = vertical[2];
 
-    // Top area: split vertically into slider panels (top 70%) and spectrum (rest)
-    // Spectrum gets Min(4) for better visibility, sliders get priority with Percentage
+    // Top area: split vertically into slider panels (40%), EQ panel (10), and spectrum (Min 4)
     let top_split = Layout::default()
         .direction(Direction::Vertical)
         .constraints([
-            Constraint::Percentage(70), // slider panels (priority)
-            Constraint::Min(4),         // spectrum (1 extra line if space allows)
+            Constraint::Percentage(40), // slider panels
+            Constraint::Length(10),     // EQ panel
+            Constraint::Min(4),         // spectrum
         ])
         .split(top);
 
     let sliders_area = top_split[0];
-    let spectrum_area = top_split[1];
+    let eq_area = top_split[1];
+    let spectrum_area = top_split[2];
 
     // Slider panels: two side-by-side
     let slider_cols = Layout::default()
@@ -81,6 +82,15 @@ pub fn render(frame: &mut Frame, app: &mut AppState) {
         &app.effects_sliders,
         effects_selected,
         app.focus == PanelFocus::EffectsSliders,
+    );
+
+    // EQ panel
+    eq_panel::render(
+        frame,
+        eq_area,
+        &app.eq_gains,
+        app.eq_selected_band,
+        app.focus == PanelFocus::EqBands,
     );
 
     // Spectrum visualizer (GPU pixel or Unicode fallback)

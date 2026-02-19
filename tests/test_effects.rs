@@ -192,3 +192,69 @@ fn test_effects_is_neutral() {
     }
     .is_neutral());
 }
+
+#[test]
+fn test_eq_params_is_neutral_default() {
+    use voiceforge::dsp::effects::EqParams;
+    let eq = EqParams::default();
+    assert!(eq.is_neutral());
+}
+
+#[test]
+fn test_effects_params_neutral_with_eq() {
+    let params = EffectsParams::default();
+    assert!(params.is_neutral());
+
+    // EQ with non-zero gains should make params non-neutral
+    let mut params_with_eq = EffectsParams::default();
+    params_with_eq.eq.gains[0] = 3.0;
+    assert!(!params_with_eq.is_neutral());
+}
+
+#[test]
+fn test_eq_boost_at_1khz() {
+    use voiceforge::dsp::effects::{apply_effects, EffectsParams};
+
+    let sr = 44100;
+    // 1 kHz sine wave
+    let input = sine_wave(1000.0, sr, 44100);
+    let input_rms = rms(&input[2000..]);
+
+    // Create params with +6 dB at 1 kHz band (band 5)
+    let mut params = EffectsParams::default();
+    params.eq.gains[5] = 6.0;
+
+    let output = apply_effects(&input, sr, &params);
+    let output_rms = rms(&output[2000..]);
+
+    let ratio = output_rms / input_rms;
+    // +6 dB ≈ 2x amplitude
+    assert!(
+        (ratio - 2.0).abs() < 0.3,
+        "1 kHz boost ratio {ratio}, expected ~2.0"
+    );
+}
+
+#[test]
+fn test_eq_boost_isolation_far_band() {
+    use voiceforge::dsp::effects::{apply_effects, EffectsParams};
+
+    let sr = 44100;
+    // 10 kHz tone
+    let input = sine_wave(10000.0, sr, 44100);
+    let input_rms = rms(&input[2000..]);
+
+    // Boost 63 Hz band (band 1) by +6 dB
+    let mut params = EffectsParams::default();
+    params.eq.gains[1] = 6.0;
+
+    let output = apply_effects(&input, sr, &params);
+    let output_rms = rms(&output[2000..]);
+
+    let ratio = output_rms / input_rms;
+    // Boosting 63 Hz should minimally affect 10 kHz (ratio 0.85-1.15)
+    assert!(
+        (ratio - 1.0).abs() < 0.15,
+        "63 Hz boost should not significantly alter 10 kHz: ratio {ratio}, expected ~1.0"
+    );
+}

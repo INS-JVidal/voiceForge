@@ -1,3 +1,4 @@
+pub mod eq_panel;
 pub mod file_picker;
 pub mod help;
 pub mod layout;

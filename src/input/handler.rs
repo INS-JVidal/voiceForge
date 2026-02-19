@@ -425,17 +425,37 @@ fn handle_normal(key: KeyEvent, app: &mut AppState) -> Option<Action> {
             None
         }
         KeyCode::Up => {
-            if app.focus != PanelFocus::Transport && app.selected_slider > 0 {
-                app.selected_slider -= 1;
+            match app.focus {
+                PanelFocus::EqBands => {
+                    // Adjust EQ band gain upward by 0.5 dB
+                    app.eq_gains[app.eq_selected_band] =
+                        (app.eq_gains[app.eq_selected_band] + 0.5).clamp(-6.0, 6.0);
+                    Some(Action::ReapplyEffects)
+                }
+                _ => {
+                    if app.selected_slider > 0 {
+                        app.selected_slider -= 1;
+                    }
+                    None
+                }
             }
-            None
         }
         KeyCode::Down => {
-            let count = app.focused_slider_count();
-            if app.focus != PanelFocus::Transport && app.selected_slider + 1 < count {
-                app.selected_slider += 1;
+            match app.focus {
+                PanelFocus::EqBands => {
+                    // Adjust EQ band gain downward by 0.5 dB
+                    app.eq_gains[app.eq_selected_band] =
+                        (app.eq_gains[app.eq_selected_band] - 0.5).clamp(-6.0, 6.0);
+                    Some(Action::ReapplyEffects)
+                }
+                _ => {
+                    let count = app.focused_slider_count();
+                    if app.focus != PanelFocus::Transport && app.selected_slider + 1 < count {
+                        app.selected_slider += 1;
+                    }
+                    None
+                }
             }
-            None
         }
         KeyCode::Left => {
             if app.focus == PanelFocus::Transport {
@@ -448,6 +468,20 @@ fn handle_normal(key: KeyEvent, app: &mut AppState) -> Option<Action> {
                     );
                 }
                 None
+            } else if app.focus == PanelFocus::EqBands {
+                // Navigate to previous band or adjust gain with Shift
+                if key.modifiers.contains(KeyModifiers::SHIFT) {
+                    // Fine adjust: -0.1 dB
+                    app.eq_gains[app.eq_selected_band] =
+                        (app.eq_gains[app.eq_selected_band] - 0.1).clamp(-6.0, 6.0);
+                    Some(Action::ReapplyEffects)
+                } else {
+                    // Navigate to previous band
+                    if app.eq_selected_band > 0 {
+                        app.eq_selected_band -= 1;
+                    }
+                    None
+                }
             } else {
                 let steps = if key.modifiers.contains(KeyModifiers::SHIFT) {
                     -0.2
@@ -475,6 +509,20 @@ fn handle_normal(key: KeyEvent, app: &mut AppState) -> Option<Action> {
                     );
                 }
                 None
+            } else if app.focus == PanelFocus::EqBands {
+                // Navigate to next band or adjust gain with Shift
+                if key.modifiers.contains(KeyModifiers::SHIFT) {
+                    // Fine adjust: +0.1 dB
+                    app.eq_gains[app.eq_selected_band] =
+                        (app.eq_gains[app.eq_selected_band] + 0.1).clamp(-6.0, 6.0);
+                    Some(Action::ReapplyEffects)
+                } else {
+                    // Navigate to next band
+                    if app.eq_selected_band + 1 < 12 {
+                        app.eq_selected_band += 1;
+                    }
+                    None
+                }
             } else {
                 let steps = if key.modifiers.contains(KeyModifiers::SHIFT) {
                     0.2
@@ -582,22 +630,35 @@ fn handle_normal(key: KeyEvent, app: &mut AppState) -> Option<Action> {
             None
         }
         KeyCode::Char('d') => {
-            // Reset the selected slider to its default value.
-            let focus = app.focus;
-            let idx = app.selected_slider;
-            let changed = if let Some(sliders) = app.focused_sliders_mut() {
-                if idx < sliders.len() {
-                    sliders[idx].reset()
-                } else {
-                    false
+            // Reset the selected slider to its default value, or EQ band to 0 dB.
+            match app.focus {
+                PanelFocus::EqBands => {
+                    let old_val = app.eq_gains[app.eq_selected_band];
+                    app.eq_gains[app.eq_selected_band] = 0.0;
+                    if (old_val - 0.0).abs() > 1e-6 {
+                        Some(Action::ReapplyEffects)
+                    } else {
+                        None
+                    }
                 }
-            } else {
-                false
-            };
-            if changed {
-                effects_slider_action(focus, idx, app)
-            } else {
-                None
+                _ => {
+                    let focus = app.focus;
+                    let idx = app.selected_slider;
+                    let changed = if let Some(sliders) = app.focused_sliders_mut() {
+                        if idx < sliders.len() {
+                            sliders[idx].reset()
+                        } else {
+                            false
+                        }
+                    } else {
+                        false
+                    };
+                    if changed {
+                        effects_slider_action(focus, idx, app)
+                    } else {
+                        None
+                    }
+                }
             }
         }
         _ => None,
@@ -618,6 +679,7 @@ fn effects_slider_action(focus: PanelFocus, idx: usize, app: &AppState) -> Optio
                 Some(Action::ReapplyEffects)
             }
         }
+        PanelFocus::EqBands => Some(Action::ReapplyEffects),
         PanelFocus::Transport => None,
     }
 }

@@ -18,6 +18,7 @@ pub enum AppMode {
 pub enum PanelFocus {
     WorldSliders,
     EffectsSliders,
+    EqBands,
     Transport,
 }
 
@@ -26,7 +27,8 @@ impl PanelFocus {
     pub fn next(self) -> Self {
         match self {
             Self::WorldSliders => Self::EffectsSliders,
-            Self::EffectsSliders => Self::Transport,
+            Self::EffectsSliders => Self::EqBands,
+            Self::EqBands => Self::Transport,
             Self::Transport => Self::WorldSliders,
         }
     }
@@ -133,6 +135,10 @@ pub struct AppState {
     /// L-12: When the status message was set. Used for auto-clear after timeout.
     pub status_message_time: Option<std::time::Instant>,
     pub spectrum_bins: Vec<f32>,
+    /// Gain values for 12-band EQ in dB.
+    pub eq_gains: [f64; 12],
+    /// Currently selected EQ band (0-11).
+    pub eq_selected_band: usize,
 }
 
 impl AppState {
@@ -159,6 +165,8 @@ impl AppState {
             status_message: None,
             status_message_time: None,
             spectrum_bins: Vec::new(),
+            eq_gains: [0.0; 12],
+            eq_selected_band: 0,
         }
     }
 
@@ -291,16 +299,18 @@ impl AppState {
         match self.focus {
             PanelFocus::WorldSliders => &self.world_sliders,
             PanelFocus::EffectsSliders => &self.effects_sliders,
+            PanelFocus::EqBands => &[],
             PanelFocus::Transport => &[],
         }
     }
 
     /// Get the mutable sliders for the currently focused panel.
-    /// Returns `None` when Transport is focused (no sliders).
+    /// Returns `None` when EqBands or Transport is focused (no sliders).
     pub fn focused_sliders_mut(&mut self) -> Option<&mut Vec<SliderDef>> {
         match self.focus {
             PanelFocus::WorldSliders => Some(&mut self.world_sliders),
             PanelFocus::EffectsSliders => Some(&mut self.effects_sliders),
+            PanelFocus::EqBands => None,
             PanelFocus::Transport => None,
         }
     }
@@ -312,7 +322,9 @@ impl AppState {
 
     /// Extract current effects slider values.
     pub fn effects_params(&self) -> EffectsParams {
+        use crate::dsp::effects::EqParams;
         let s = &self.effects_sliders;
+        let eq_gains_f32: [f32; 12] = self.eq_gains.map(|g| g as f32);
         EffectsParams {
             gain_db: s[0].value as f32,
             low_cut_hz: s[1].value as f32,
@@ -320,6 +332,9 @@ impl AppState {
             compressor_thresh_db: s[3].value as f32,
             reverb_mix: s[4].value as f32,
             pitch_shift_semitones: s[5].value as f32,
+            eq: EqParams {
+                gains: eq_gains_f32,
+            },
         }
     }
 

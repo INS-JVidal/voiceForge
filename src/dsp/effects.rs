@@ -1,5 +1,24 @@
 use std::f32::consts::PI;
 
+/// Parameters for the 12-band graphic EQ.
+#[derive(Debug, Clone, PartialEq)]
+pub struct EqParams {
+    pub gains: [f32; 12],
+}
+
+impl Default for EqParams {
+    fn default() -> Self {
+        Self { gains: [0.0; 12] }
+    }
+}
+
+impl EqParams {
+    /// True when all EQ bands are at 0 dB (neutral).
+    pub fn is_neutral(&self) -> bool {
+        self.gains.iter().all(|&g| g.abs() < 1e-6)
+    }
+}
+
 /// Parameters for the post-WORLD effects chain.
 #[derive(Debug, Clone, PartialEq)]
 pub struct EffectsParams {
@@ -9,6 +28,7 @@ pub struct EffectsParams {
     pub compressor_thresh_db: f32,
     pub reverb_mix: f32,
     pub pitch_shift_semitones: f32,
+    pub eq: EqParams,
 }
 
 impl Default for EffectsParams {
@@ -20,6 +40,7 @@ impl Default for EffectsParams {
             compressor_thresh_db: 0.0,
             reverb_mix: 0.0,
             pitch_shift_semitones: 0.0,
+            eq: EqParams::default(),
         }
     }
 }
@@ -34,11 +55,12 @@ impl EffectsParams {
             && self.compressor_thresh_db >= 0.0
             && self.reverb_mix.abs() < 1e-6
             && self.pitch_shift_semitones.abs() < 1e-6
+            && self.eq.is_neutral()
     }
 }
 
 /// Apply the full effects chain in order: gain → highpass → lowpass →
-/// compressor → pitch shift → reverb.  Returns a new buffer.
+/// compressor → pitch shift → reverb → EQ.  Returns a new buffer.
 pub fn apply_effects(samples: &[f32], sample_rate: u32, params: &EffectsParams) -> Vec<f32> {
     if params.is_neutral() || samples.is_empty() || sample_rate == 0 {
         return samples.to_vec();
@@ -68,10 +90,13 @@ pub fn apply_effects(samples: &[f32], sample_rate: u32, params: &EffectsParams) 
         buf = apply_pitch_shift(&buf, params.pitch_shift_semitones);
     }
 
-    // 6. Reverb (last)
+    // 6. Reverb
     if params.reverb_mix > 0.0 {
         buf = apply_reverb(&buf, sample_rate, params.reverb_mix);
     }
+
+    // 7. EQ (final stage)
+    apply_eq(&mut buf, sample_rate, &params.eq);
 
     buf
 }
@@ -93,6 +118,9 @@ pub fn apply_gain(samples: &mut [f32], gain_db: f32) {
 enum BiquadType {
     Highpass,
     Lowpass,
+    Peaking { gain_db: f32, q: f32 },
+    LowShelf { gain_db: f32 },
+    HighShelf { gain_db: f32 },
 }
 
 struct Biquad {
@@ -105,22 +133,81 @@ struct Biquad {
 
 impl Biquad {
     fn new(btype: BiquadType, freq: f32, sample_rate: u32) -> Self {
-        let q = std::f32::consts::FRAC_1_SQRT_2; // 0.707 Butterworth
         let nyquist = sample_rate as f32 / 2.0;
         let clamped = freq.min(nyquist * 0.95).max(1.0);
         let w0 = 2.0 * PI * clamped / sample_rate as f32;
-        let alpha = w0.sin() / (2.0 * q);
         let cos_w0 = w0.cos();
-        let a0 = 1.0 + alpha;
+        let sin_w0 = w0.sin();
 
-        let (b0, b1, b2) = match btype {
+        let (_a0, a1, a2, b0, b1, b2) = match btype {
             BiquadType::Highpass => {
-                let v = (1.0 + cos_w0) / 2.0;
-                (v / a0, -(1.0 + cos_w0) / a0, v / a0)
+                let q = std::f32::consts::FRAC_1_SQRT_2; // 0.707 Butterworth
+                let alpha = sin_w0 / (2.0 * q);
+                let a0_val = 1.0 + alpha;
+                (
+                    a0_val,
+                    (-2.0 * cos_w0) / a0_val,
+                    (1.0 - alpha) / a0_val,
+                    (1.0 + cos_w0) / (2.0 * a0_val),
+                    -(1.0 + cos_w0) / a0_val,
+                    (1.0 + cos_w0) / (2.0 * a0_val),
+                )
             }
             BiquadType::Lowpass => {
-                let v = (1.0 - cos_w0) / 2.0;
-                (v / a0, (1.0 - cos_w0) / a0, v / a0)
+                let q = std::f32::consts::FRAC_1_SQRT_2; // 0.707 Butterworth
+                let alpha = sin_w0 / (2.0 * q);
+                let a0_val = 1.0 + alpha;
+                (
+                    a0_val,
+                    (-2.0 * cos_w0) / a0_val,
+                    (1.0 - alpha) / a0_val,
+                    (1.0 - cos_w0) / (2.0 * a0_val),
+                    (1.0 - cos_w0) / a0_val,
+                    (1.0 - cos_w0) / (2.0 * a0_val),
+                )
+            }
+            BiquadType::Peaking { gain_db, q } => {
+                let alpha = sin_w0 / (2.0 * q);
+                let a = 10.0_f32.powf(gain_db / 40.0);
+                let a0_val = 1.0 + alpha / a;
+                (
+                    a0_val,
+                    (-2.0 * cos_w0) / a0_val,
+                    (1.0 - alpha / a) / a0_val,
+                    (1.0 + alpha * a) / a0_val,
+                    (-2.0 * cos_w0) / a0_val,
+                    (1.0 - alpha * a) / a0_val,
+                )
+            }
+            BiquadType::LowShelf { gain_db } => {
+                let a = 10.0_f32.powf(gain_db / 40.0);
+                let s = 1.0; // Shelf slope
+                let alpha = sin_w0 / 2.0 * ((a + 1.0 / a) * (1.0 / s - 1.0) + 2.0).sqrt();
+                let cos_w0_a = 2.0 * a.sqrt() * alpha;
+                let a0_val = (a + 1.0) + (a - 1.0) * cos_w0 + cos_w0_a;
+                (
+                    a0_val,
+                    (-2.0 * ((a - 1.0) + (a + 1.0) * cos_w0)) / a0_val,
+                    ((a + 1.0) + (a - 1.0) * cos_w0 - cos_w0_a) / a0_val,
+                    (a * ((a + 1.0) - (a - 1.0) * cos_w0 + cos_w0_a)) / a0_val,
+                    (2.0 * a * ((a - 1.0) - (a + 1.0) * cos_w0)) / a0_val,
+                    (a * ((a + 1.0) - (a - 1.0) * cos_w0 - cos_w0_a)) / a0_val,
+                )
+            }
+            BiquadType::HighShelf { gain_db } => {
+                let a = 10.0_f32.powf(gain_db / 40.0);
+                let s = 1.0; // Shelf slope
+                let alpha = sin_w0 / 2.0 * ((a + 1.0 / a) * (1.0 / s - 1.0) + 2.0).sqrt();
+                let cos_w0_a = 2.0 * a.sqrt() * alpha;
+                let a0_val = (a + 1.0) - (a - 1.0) * cos_w0 + cos_w0_a;
+                (
+                    a0_val,
+                    (2.0 * ((a - 1.0) - (a + 1.0) * cos_w0)) / a0_val,
+                    ((a + 1.0) - (a - 1.0) * cos_w0 - cos_w0_a) / a0_val,
+                    (a * ((a + 1.0) + (a - 1.0) * cos_w0 + cos_w0_a)) / a0_val,
+                    (-2.0 * a * ((a - 1.0) + (a + 1.0) * cos_w0)) / a0_val,
+                    (a * ((a + 1.0) + (a - 1.0) * cos_w0 - cos_w0_a)) / a0_val,
+                )
             }
         };
 
@@ -128,8 +215,8 @@ impl Biquad {
             b0,
             b1,
             b2,
-            a1: (-2.0 * cos_w0) / a0,
-            a2: (1.0 - alpha) / a0,
+            a1,
+            a2,
         }
     }
 
@@ -277,4 +364,47 @@ fn allpass_filter(input: &[f32], delay: usize, gain: f32) -> Vec<f32> {
         idx = (idx + 1) % delay;
     }
     output
+}
+
+// ── 12-Band Graphic EQ ───────────────────────────────────────────────────────
+
+/// 12-band graphic EQ: frequencies and filter types.
+const EQ_BANDS: [(f32, &str); 12] = [
+    (31.0, "shelf_low"),
+    (63.0, "peak"),
+    (125.0, "peak"),
+    (250.0, "peak"),
+    (500.0, "peak"),
+    (1000.0, "peak"),
+    (2000.0, "peak"),
+    (3150.0, "peak"),
+    (4000.0, "peak"),
+    (6300.0, "peak"),
+    (10000.0, "peak"),
+    (16000.0, "shelf_high"),
+];
+
+/// Apply 12-band graphic EQ to samples.
+pub fn apply_eq(samples: &mut [f32], sample_rate: u32, params: &EqParams) {
+    if params.is_neutral() || samples.is_empty() || sample_rate == 0 {
+        return;
+    }
+
+    for (i, &(freq, kind)) in EQ_BANDS.iter().enumerate() {
+        let gain_db = params.gains[i];
+        if gain_db.abs() < 1e-6 {
+            continue; // Skip neutral bands
+        }
+
+        let btype = match kind {
+            "shelf_low" => BiquadType::LowShelf { gain_db },
+            "shelf_high" => BiquadType::HighShelf { gain_db },
+            _ => BiquadType::Peaking {
+                gain_db,
+                q: 1.41, // ~1 octave bandwidth
+            },
+        };
+
+        apply_biquad(samples, sample_rate, btype, freq);
+    }
 }
