@@ -8,7 +8,9 @@
 
 ## Summary
 
-Replaced the simple text-input file picker with an interactive dialog that shows live suggestions as the user types. Features include real-time directory listing (up to 5 matches), Up/Down arrow navigation, Tab-based directory traversal, and audio format verification before loading. The picker is inspired by Claude Code's file open dialog.
+Replaced the simple text-input file picker with an interactive dialog that shows live suggestions as the user types. Features include real-time directory listing with scrollable 5-row window, Up/Down arrow navigation with auto-scroll tracking, Tab-based directory traversal, and audio format verification before loading. The picker is inspired by Claude Code's file open dialog.
+
+**Enhancement (2026-02-19):** Extended to support directories with 10+ matches via a 5-row scrolling window. All matches are stored; scroll offset tracks selection automatically.
 
 ---
 
@@ -17,11 +19,12 @@ Replaced the simple text-input file picker with an interactive dialog that shows
 ### New AppState Fields (`src/app.rs`)
 
 ```rust
-pub file_picker_matches: Vec<String>,    // up to 5 matching paths; dirs have trailing '/'
-pub file_picker_selected: Option<usize>, // highlighted index into matches
+pub file_picker_matches: Vec<String>,    // all matching paths; dirs have trailing '/'
+pub file_picker_scroll: usize,           // scroll offset: first visible item in 5-row window
+pub file_picker_selected: Option<usize>, // highlighted index into matches (absolute, not relative to scroll)
 ```
 
-Both initialized to empty/`None` in `AppState::new()`.
+All initialized to empty/0/`None` in `AppState::new()`. The `file_picker_scroll` field enables scrolling through lists larger than the 5-row visible area.
 
 ### Helper Function: `update_file_picker_matches()` (`src/input/handler.rs`)
 
@@ -44,7 +47,8 @@ Called on every input change and when picker opens. Algorithm:
 
 **Sorting and filtering:**
 - Directories first, then files; alphabetical within each group
-- Take first 5 matches
+- Store all filtered matches (no `.take(5)` cap)
+- Reset `file_picker_scroll` to 0 (when list recomputed, list may have changed completely)
 - Clamp `file_picker_selected` to valid range; set `None` if matches empty
 
 ### Helper Function: `precheck_audio_file()` (`src/input/handler.rs`)
@@ -70,9 +74,9 @@ Replaced the simple `_ => handle_text_input() → None` with explicit key routin
 
 | Key | Handler |
 |-----|---------|
-| `Esc` | Clear mode, input, cursor, matches, selection → return Normal mode |
-| `Down` | Move selection: `None→0`, `i→min(i+1, len-1)`; no-op if empty |
-| `Up` | Move selection: `0→None`, `i→i-1`; no-op if None or empty |
+| `Esc` | Clear mode, input, cursor, matches, selection, **scroll** → return Normal mode |
+| `Down` | Move selection: `None→0`, `i→min(i+1, len-1)`; adjust scroll to keep sel visible in [scroll..scroll+5] |
+| `Up` | Move selection: `0→None`, `i→i-1`; adjust scroll to keep sel visible in [scroll..scroll+5] |
 | `Tab` | **Auto-complete to first match if no selection**, else use selected match. If dir: set input + "/", clear selection, refresh; if file: set input to path |
 | `Enter` (selected dir) | Same as Tab: navigate into directory |
 | `Enter` (selected file) | `precheck_audio_file()` → emit `Action::LoadFile` if OK, else error status |
@@ -107,6 +111,7 @@ update_file_picker_matches(app);  // ← populate CWD immediately
 ```rust
 // ... existing code ...
 app.file_picker_matches.clear();   // ← prevent visual bleed
+app.file_picker_scroll = 0;        // ← reset scroll offset
 app.file_picker_selected = None;
 app.mode = AppMode::Saving;
 ```
@@ -115,9 +120,12 @@ app.mode = AppMode::Saving;
 
 **Dynamic height calculation:**
 ```rust
-let n = app.file_picker_matches.len();
-let popup_h: u16 = if n == 0 { 4 } else { (5 + n) as u16 };  // range: 4–10 rows
+let total = app.file_picker_matches.len();
+let n_visible = total.min(5);  // 5-row window max
+let popup_h: u16 = if n_visible == 0 { 4 } else { (5 + n_visible) as u16 };  // range: 4–10 rows (fixed height)
 ```
+
+The popup height is now constant—capped at 5 visible items. If total matches exceeds 5, users scroll with Up/Down.
 
 **Inner area layout (3 sections):**
 
@@ -130,13 +138,19 @@ let popup_h: u16 = if n == 0 { 4 } else { (5 + n) as u16 };  // range: 4–10 ro
    - Renders as: `" > before█after"` with cursor block in cyan
 
 3. **Match area (0–5 rows):**
-   - If n > 0: divider line `"─────"` in dark gray, then match items
-   - Each match item (one row):
-     - Selected: `"▶ path"` in bold yellow
-     - Unselected dir: `"  path/"` in cyan
-     - Unselected file: `"  path"` in white
-   - If n = 0 and input non-empty: show `"  no matches"` in dark gray
-   - Paths longer than width - 2: truncated with `…` suffix
+   - If n_visible > 0: render windowed divider with scroll indicator, then match items
+   - **Divider with scroll indicator:**
+     - No items above/below: plain dashes `"─────"`
+     - Items above (above > 0): `"─ ↑N ─────"` (where N = count above scroll)
+     - Items below (below > 0): `"─ ↓N ─────"` (where N = count below visible window)
+     - Both: `"─ ↑N ↓M ─"` (shows bidirectional scroll availability)
+   - **Match items (windowed slice [scroll..scroll+5]):**
+     - Each match item (one row):
+       - Selected: `"▶ path"` in bold yellow
+       - Unselected dir: `"  path/"` in cyan
+       - Unselected file: `"  path"` in white
+     - Paths longer than width - 2: truncated with `…` suffix
+   - If n_visible = 0 and input non-empty: show `"  no matches"` in dark gray
 
 ---
 
@@ -158,11 +172,11 @@ let popup_h: u16 = if n == 0 { 4 } else { (5 + n) as u16 };  // range: 4–10 ro
 ✓ cargo test --all-targets — All 52 tests passing
 ```
 
-### Manual Testing Checklist
-✓ Open picker with `o` → CWD contents appear immediately (up to 5)
-✓ Type a letter → suggestions update live; selection resets
+### Manual Testing Checklist (Original Features)
+✓ Open picker with `o` → CWD contents appear immediately
+✓ Type a letter → suggestions update live; selection resets, scroll resets to 0
 ✓ Press `↓`/`↑` → highlight moves through list; `↑` from 0 deselects
-✓ Press `Tab` with no selection → auto-completes to first match (dir or file)
+✓ Press `Tab` with no selection → auto-completes to first visible match (dir or file)
 ✓ Press `Tab` on highlighted directory → input advances to dir path, list refreshes
 ✓ Press `Tab` on highlighted file → input set to file path (allows preview before Enter)
 ✓ Press `Enter` on audio file match → file loads, picker closes
@@ -170,10 +184,21 @@ let popup_h: u16 = if n == 0 { 4 } else { (5 + n) as u16 };  // range: 4–10 ro
 ✓ Press `Enter` on unreadable file (permission denied) → status error, stays open
 ✓ Press `Enter` on directory match → navigates into directory
 ✓ Press `Enter` with raw input (no selection) → original validation flow
-✓ Press `Esc` → picker closes, state cleaned
-✓ Open save dialog (`s`) → no stale file picker suggestions
+✓ Press `Esc` → picker closes, state and scroll cleaned
+✓ Open save dialog (`s`) → no stale file picker suggestions or scroll offset
 ✓ Non-UTF8 filenames → handled gracefully via `to_string_lossy()`
 ✓ Large directory (1000+ files) → no hang (capped at 1000 scanned)
+
+### Manual Testing Checklist (Scrollable Enhancement — 2026-02-19)
+✓ Directory with 10+ matches → stores all; only 5 visible at a time
+✓ Press `↓` beyond row 4 → scroll advances automatically; selection stays visible
+✓ Press `↑` above visible window → scroll adjusts; selection stays visible
+✓ Divider shows `↓N` when more items below the window
+✓ Divider shows `↑N` when items above the window
+✓ Divider shows `↑N ↓M` when both above and below
+✓ Divider shows plain dashes when all items fit in window
+✓ Tab auto-completes to first _visible_ match (respects scroll)
+✓ Enter on selection beyond row 5 works correctly (uses absolute index)
 
 ### Edge Cases Verified
 - Empty directory → no matches, "no matches" message shown
@@ -209,8 +234,9 @@ let popup_h: u16 = if n == 0 { 4 } else { (5 + n) as u16 };  // range: 4–10 ro
 
 - **Directory scan cap:** 1000 entries max (prevents hang on huge directories)
 - **Update frequency:** every keystroke (acceptable for typical directories <1000 files)
-- **Memory:** matches vector never exceeds 5 items
-- **UI redraw:** full popup redrawn each frame (standard ratatui pattern)
+- **Memory:** matches vector can grow to 1000 items (all filtered matches stored); scroll window is O(1) offset tracking
+- **Visible items:** fixed at 5-row window, regardless of total list size
+- **UI redraw:** full popup redrawn each frame (standard ratatui pattern); only visible slice rendered
 
 ---
 
@@ -230,9 +256,13 @@ let popup_h: u16 = if n == 0 { 4 } else { (5 + n) as u16 };  // range: 4–10 ro
 
 ---
 
-## Commit
+## Commits
 
-`3e8af8b` — feat: add interactive file picker with live autocomplete
+**Initial implementation:**
+- `3e8af8b` — feat: add interactive file picker with live autocomplete
+
+**Enhancement (2026-02-19):**
+- `1ace706` — feat: implement scrollable file picker with 5-row window
 
 ---
 
