@@ -65,7 +65,7 @@ WORLD analysis is **offline** (~2-5s per minute of audio). Results are cached in
 
 - `src/app.rs` — Central `AppState`, `Action` enum, `SliderDef`, `FileInfo`, `WorldSliderValues` helper
 - `src/audio/decoder.rs` — symphonia-based file decoder → `AudioData` (interleaved f32 PCM)
-- `src/audio/playback.rs` — cpal output stream, `PlaybackState` (atomics), `start_playback`, `rebuild_stream`
+- `src/audio/playback.rs` — cpal output stream, `PlaybackState` (atomics + `audio_lock`), `start_playback`, `rebuild_stream`, `swap_audio`
 - `src/dsp/world.rs` — f32↔f64 conversion, mono downmix (`to_mono`), thin wrappers around `world_sys::analyze`/`synthesize`
 - `src/dsp/modifier.rs` — `WorldSliderValues` struct, `apply()` with 6 transforms (pitch shift, pitch range, speed, breathiness, formant shift, spectral tilt)
 - `src/dsp/processing.rs` — `ProcessingHandle` (spawn/send/try_recv/shutdown), background thread with command drain and neutral-slider shortcut
@@ -77,10 +77,10 @@ WORLD analysis is **offline** (~2-5s per minute of audio). Results are cached in
 
 - **ratatui 0.30**: crossterm is re-exported via `ratatui::crossterm` — no separate crossterm dependency needed
 - **Two pitch shift controls**: WORLD pitch shift (formant-preserving, modifies f0) vs Effects pitch shift (phase vocoder, shifts everything including formants)
-- **A/B comparison**: Two PCM buffers (original + processed) with shared seek position; `AtomicBool` toggles which buffer the audio thread reads from (placeholder — not yet wired)
+- **A/B comparison**: `'a'` key toggles between original mono and processed audio. Both buffers stored in `AppState` (`original_audio` + `audio_data`). Toggle swaps the `Arc<AudioData>` inside the stream's `RwLock` via `swap_audio()` — O(1), glitch-free, no stream rebuild. Position scaled proportionally when buffer lengths differ (speed slider).
 - **Consistent mono output**: WORLD always produces mono. The processing thread stores a mono downmix of the original for the neutral-slider shortcut. Main thread adjusts playback position on channel count changes (stereo→mono on first resynthesis).
 - **Debounced resynthesis**: 150ms debounce on slider changes. Processing thread drains stale `Resynthesize` commands, keeping only the latest.
-- **Stream rebuild on buffer swap**: `rebuild_stream` creates a new cpal stream reusing existing `PlaybackState` atomics (position/playing preserved). Sub-ms gap, inaudible after processing delay.
+- **Buffer swap via RwLock**: `swap_audio()` replaces the `Arc<AudioData>` inside the stream's `RwLock` — glitch-free, O(1). `rebuild_stream` is only used as a fallback if `audio_lock` is unavailable. Both `start_playback` and `rebuild_stream` expose the `audio_lock` handle in `PlaybackState`.
 - **world_sys error handling**: `synthesize()` returns `Result` (allocation guard, param validation). `analyze()` panics on invalid input (programmer error). Processing thread sends status message on synthesis failure.
 
 ## Implementation Phases
@@ -93,7 +93,8 @@ The project follows phases P0–P8 defined in `plans/initial_plan.md`. Reports i
 - **P2** — TUI skeleton with ratatui (sliders, transport, status bar, file picker) ✓
 - **P3** — WORLD integration and slider-driven resynthesis (6 transforms, processing thread, debounce) ✓
 - **P3b** — Audit integration corrections (API compat fixes after P0–P2 security audit merge) ✓
-- P4–P8 — Remaining (A/B comparison, spectrum FFT, effects chain, WAV export, polish)
+- **P4** — A/B comparison toggle (`'a'` key, RwLock swap, proportional position scaling) ✓
+- P5–P8 — Remaining (spectrum FFT, effects chain, WAV export, polish)
 
 ### Test Count
 
