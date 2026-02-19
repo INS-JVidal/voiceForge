@@ -123,6 +123,8 @@ pub struct AppState {
     pub ab_original: bool,
     pub should_quit: bool,
     pub file_picker_input: String,
+    /// L-11: Cursor position within file_picker_input (byte offset).
+    pub input_cursor: usize,
     pub status_message: Option<String>,
     /// L-12: When the status message was set. Used for auto-clear after timeout.
     pub status_message_time: Option<std::time::Instant>,
@@ -148,6 +150,7 @@ impl AppState {
             ab_original: false,
             should_quit: false,
             file_picker_input: String::new(),
+            input_cursor: 0,
             status_message: None,
             status_message_time: None,
             spectrum_bins: Vec::new(),

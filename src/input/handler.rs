@@ -20,16 +20,85 @@ pub fn handle_key_event(key: KeyEvent, app: &mut AppState) -> Option<Action> {
     }
 }
 
+/// L-11: Handle text editing keys (cursor movement, insert, delete) for input fields.
+/// Returns `true` if the key was handled as a text editing action.
+fn handle_text_input(key: &KeyEvent, app: &mut AppState) -> bool {
+    match key.code {
+        KeyCode::Left => {
+            if app.input_cursor > 0 {
+                // Move cursor left by one char (handle multi-byte UTF-8).
+                let prev = app.file_picker_input[..app.input_cursor]
+                    .char_indices()
+                    .next_back()
+                    .map(|(i, _)| i)
+                    .unwrap_or(0);
+                app.input_cursor = prev;
+            }
+            true
+        }
+        KeyCode::Right => {
+            if app.input_cursor < app.file_picker_input.len() {
+                let next = app.file_picker_input[app.input_cursor..]
+                    .char_indices()
+                    .nth(1)
+                    .map(|(i, _)| app.input_cursor + i)
+                    .unwrap_or(app.file_picker_input.len());
+                app.input_cursor = next;
+            }
+            true
+        }
+        KeyCode::Home => {
+            app.input_cursor = 0;
+            true
+        }
+        KeyCode::End => {
+            app.input_cursor = app.file_picker_input.len();
+            true
+        }
+        KeyCode::Backspace => {
+            if app.input_cursor > 0 {
+                let prev = app.file_picker_input[..app.input_cursor]
+                    .char_indices()
+                    .next_back()
+                    .map(|(i, _)| i)
+                    .unwrap_or(0);
+                app.file_picker_input.drain(prev..app.input_cursor);
+                app.input_cursor = prev;
+            }
+            true
+        }
+        KeyCode::Delete => {
+            if app.input_cursor < app.file_picker_input.len() {
+                let next = app.file_picker_input[app.input_cursor..]
+                    .char_indices()
+                    .nth(1)
+                    .map(|(i, _)| app.input_cursor + i)
+                    .unwrap_or(app.file_picker_input.len());
+                app.file_picker_input.drain(app.input_cursor..next);
+            }
+            true
+        }
+        KeyCode::Char(c) => {
+            app.file_picker_input.insert(app.input_cursor, c);
+            app.input_cursor += c.len_utf8();
+            true
+        }
+        _ => false,
+    }
+}
+
 fn handle_file_picker(key: KeyEvent, app: &mut AppState) -> Option<Action> {
     match key.code {
         KeyCode::Esc => {
             app.mode = AppMode::Normal;
             app.file_picker_input.clear();
+            app.input_cursor = 0;
             None
         }
         KeyCode::Enter => {
             let path = app.file_picker_input.trim().to_string();
             app.file_picker_input.clear();
+            app.input_cursor = 0;
             app.mode = AppMode::Normal;
             if path.is_empty() {
                 None
@@ -47,15 +116,10 @@ fn handle_file_picker(key: KeyEvent, app: &mut AppState) -> Option<Action> {
                 }
             }
         }
-        KeyCode::Backspace => {
-            app.file_picker_input.pop();
+        _ => {
+            handle_text_input(&key, app);
             None
         }
-        KeyCode::Char(c) => {
-            app.file_picker_input.push(c);
-            None
-        }
-        _ => None,
     }
 }
 
@@ -64,11 +128,13 @@ fn handle_save_dialog(key: KeyEvent, app: &mut AppState) -> Option<Action> {
         KeyCode::Esc => {
             app.mode = AppMode::Normal;
             app.file_picker_input.clear();
+            app.input_cursor = 0;
             None
         }
         KeyCode::Enter => {
             let path = app.file_picker_input.trim().to_string();
             app.file_picker_input.clear();
+            app.input_cursor = 0;
             app.mode = AppMode::Normal;
             if path.is_empty() {
                 None
@@ -83,15 +149,10 @@ fn handle_save_dialog(key: KeyEvent, app: &mut AppState) -> Option<Action> {
                 }
             }
         }
-        KeyCode::Backspace => {
-            app.file_picker_input.pop();
+        _ => {
+            handle_text_input(&key, app);
             None
         }
-        KeyCode::Char(c) => {
-            app.file_picker_input.push(c);
-            None
-        }
-        _ => None,
     }
 }
 
@@ -244,6 +305,7 @@ fn handle_normal(key: KeyEvent, app: &mut AppState) -> Option<Action> {
                     "output_processed.wav".to_string()
                 };
                 app.file_picker_input = default_path;
+                app.input_cursor = app.file_picker_input.len();
                 app.mode = AppMode::Saving;
             } else {
                 app.set_status("No audio to export".to_string());
@@ -253,6 +315,7 @@ fn handle_normal(key: KeyEvent, app: &mut AppState) -> Option<Action> {
         KeyCode::Char('o') => {
             app.mode = AppMode::FilePicker;
             app.file_picker_input.clear();
+            app.input_cursor = 0;
             None
         }
         KeyCode::Char('?') => {

@@ -5,6 +5,7 @@ use ratatui::widgets::{Block, Borders, Clear, Paragraph};
 use ratatui::Frame;
 
 use crate::app::AppState;
+use crate::ui::file_picker::render_input_line;
 
 pub fn render(frame: &mut Frame, app: &AppState) {
     let area = centered_rect(60, 5, frame.area());
@@ -23,6 +24,9 @@ pub fn render(frame: &mut Frame, app: &AppState) {
     let inner = block.inner(area);
     frame.render_widget(block, area);
 
+    // L-10/L-11: Reuse shared input rendering with cursor and scrolling.
+    let (before, after) = render_input_line(app, inner.width as usize);
+
     let lines = vec![
         Line::from(Span::styled(
             " Enter output path (Esc to cancel):",
@@ -31,11 +35,9 @@ pub fn render(frame: &mut Frame, app: &AppState) {
         Line::from(""),
         Line::from(vec![
             Span::styled(" > ", Style::default().fg(Color::Cyan)),
-            Span::styled(
-                &app.file_picker_input,
-                Style::default().fg(Color::White),
-            ),
+            Span::styled(before, Style::default().fg(Color::White)),
             Span::styled("█", Style::default().fg(Color::Cyan)),
+            Span::styled(after, Style::default().fg(Color::White)),
         ]),
     ];
 
