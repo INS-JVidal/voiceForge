@@ -14,6 +14,7 @@ crossbeam-channel = "0.5"
 symphonia = { version = "0.5", features = ["mp3", "wav", "pcm", "flac"] }
 ratatui = "0.30"
 rustfft = "6.4"
+hound = "3.5"
 
 [dev-dependencies]
 hound = "3.5"

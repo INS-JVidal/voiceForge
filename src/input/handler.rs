@@ -4,11 +4,13 @@ use std::sync::atomic::Ordering;
 use ratatui::crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
 
 use crate::app::{Action, AppMode, AppState, PanelFocus};
+use crate::audio::export;
 
 /// Handle a key press event, mutating app state and optionally returning an action.
 pub fn handle_key_event(key: KeyEvent, app: &mut AppState) -> Option<Action> {
     match app.mode {
         AppMode::FilePicker => handle_file_picker(key, app),
+        AppMode::Saving => handle_save_dialog(key, app),
         AppMode::Normal => handle_normal(key, app),
     }
 }
@@ -38,6 +40,35 @@ fn handle_file_picker(key: KeyEvent, app: &mut AppState) -> Option<Action> {
                 } else {
                     Some(Action::LoadFile(path))
                 }
+            }
+        }
+        KeyCode::Backspace => {
+            app.file_picker_input.pop();
+            None
+        }
+        KeyCode::Char(c) => {
+            app.file_picker_input.push(c);
+            None
+        }
+        _ => None,
+    }
+}
+
+fn handle_save_dialog(key: KeyEvent, app: &mut AppState) -> Option<Action> {
+    match key.code {
+        KeyCode::Esc => {
+            app.mode = AppMode::Normal;
+            app.file_picker_input.clear();
+            None
+        }
+        KeyCode::Enter => {
+            let path = app.file_picker_input.trim().to_string();
+            app.file_picker_input.clear();
+            app.mode = AppMode::Normal;
+            if path.is_empty() {
+                None
+            } else {
+                Some(Action::ExportWav(path))
             }
         }
         KeyCode::Backspace => {
@@ -185,6 +216,20 @@ fn handle_normal(key: KeyEvent, app: &mut AppState) -> Option<Action> {
             } else {
                 None
             }
+        }
+        KeyCode::Char('s') => {
+            if app.audio_data.is_some() {
+                let default_path = if let Some(ref info) = app.file_info {
+                    export::default_export_path(&info.path)
+                } else {
+                    "output_processed.wav".to_string()
+                };
+                app.file_picker_input = default_path;
+                app.mode = AppMode::Saving;
+            } else {
+                app.status_message = Some("No audio to export".to_string());
+            }
+            None
         }
         KeyCode::Char('o') => {
             app.mode = AppMode::FilePicker;

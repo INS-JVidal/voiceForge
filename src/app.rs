@@ -9,6 +9,7 @@ use std::sync::Arc;
 pub enum AppMode {
     Normal,
     FilePicker,
+    Saving,
 }
 
 /// Which panel has keyboard focus.
@@ -40,12 +41,14 @@ pub enum Action {
     /// Live gain update — carries pre-computed linear multiplier.
     LiveGain(f32),
     ToggleAB,
+    ExportWav(String),
 }
 
 /// Info about the currently loaded file.
 #[derive(Debug, Clone)]
 pub struct FileInfo {
     pub name: String,
+    pub path: String,
     pub sample_rate: u32,
     pub channels: u16,
     pub duration_secs: f64,

@@ -2,7 +2,7 @@ use ratatui::layout::{Constraint, Direction, Layout};
 use ratatui::Frame;
 
 use crate::app::{AppMode, AppState, PanelFocus};
-use crate::ui::{file_picker, slider, spectrum, status_bar, transport};
+use crate::ui::{file_picker, save_dialog, slider, spectrum, status_bar, transport};
 
 pub fn render(frame: &mut Frame, app: &AppState) {
     let area = frame.area();
@@ -78,8 +78,11 @@ pub fn render(frame: &mut Frame, app: &AppState) {
     // Status bar
     status_bar::render(frame, status_area, app);
 
-    // File picker overlay (on top of everything)
+    // Modal overlays (on top of everything)
     if app.mode == AppMode::FilePicker {
         file_picker::render(frame, app);
+    }
+    if app.mode == AppMode::Saving {
+        save_dialog::render(frame, app);
     }
 }

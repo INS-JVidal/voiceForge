@@ -234,6 +234,41 @@ fn main() -> io::Result<()> {
                                 .live_gain
                                 .store(linear.to_bits(), std::sync::atomic::Ordering::Relaxed);
                         }
+                        Action::ExportWav(dest_path) => {
+                            // Export what the user is hearing: original when
+                            // A/B is on original, processed otherwise.
+                            let source = if app.ab_original {
+                                app.original_audio.as_ref()
+                            } else {
+                                app.audio_data.as_ref()
+                            };
+                            if let Some(audio) = source {
+                                let mut samples = audio.samples.clone();
+                                // Bake live gain (not stored in audio buffer).
+                                let gain_db = app.effects_sliders[0].value as f32;
+                                if gain_db != 0.0 {
+                                    voiceforge::dsp::effects::apply_gain(
+                                        &mut samples,
+                                        gain_db,
+                                    );
+                                }
+                                match audio::export::export_wav(
+                                    &samples,
+                                    audio.sample_rate,
+                                    audio.channels,
+                                    Path::new(&dest_path),
+                                ) {
+                                    Ok(()) => {
+                                        app.status_message =
+                                            Some(format!("Saved: {dest_path}"));
+                                    }
+                                    Err(e) => {
+                                        app.status_message =
+                                            Some(format!("Export error: {e}"));
+                                    }
+                                }
+                            }
+                        }
                         Action::ToggleAB => {
                             // ab_original was already flipped by the handler
                             if let Some(ref lock) = app.playback.audio_lock {
@@ -310,6 +345,7 @@ fn load_file(path: &str, app: &mut AppState) -> Result<cpal::Stream, Box<dyn std
             .and_then(|n| n.to_str())
             .unwrap_or("unknown")
             .to_string(),
+        path: path.to_string_lossy().into_owned(),
         sample_rate: audio_data.sample_rate,
         channels: audio_data.channels,
         duration_secs: audio_data.duration_secs(),
