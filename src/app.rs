@@ -2,8 +2,6 @@ use crate::audio::decoder::AudioData;
 use crate::audio::playback::PlaybackState;
 use crate::dsp::effects::EffectsParams;
 use crate::dsp::modifier::WorldSliderValues;
-use ratatui_image::picker::Picker;
-use ratatui_image::protocol::StatefulProtocol;
 use std::sync::Arc;
 
 /// Which mode the UI is in.
@@ -129,8 +127,6 @@ pub struct AppState {
     /// L-12: When the status message was set. Used for auto-clear after timeout.
     pub status_message_time: Option<std::time::Instant>,
     pub spectrum_bins: Vec<f32>,
-    pub spectrum_picker: Option<Picker>,
-    pub spectrum_state: Option<Box<dyn StatefulProtocol>>,
 }
 
 impl AppState {
@@ -154,8 +150,6 @@ impl AppState {
             status_message: None,
             status_message_time: None,
             spectrum_bins: Vec::new(),
-            spectrum_picker: None,
-            spectrum_state: None,
         }
     }
 

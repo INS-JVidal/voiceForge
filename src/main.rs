@@ -54,21 +54,6 @@ fn main() -> io::Result<()> {
 
     let mut app = AppState::new();
 
-    // Initialize graphics protocol picker for spectrum visualization.
-    // Must happen after terminal is set up; detection is best-effort.
-    match ratatui_image::picker::Picker::from_termios() {
-        Ok(mut picker) => {
-            picker.guess_protocol();
-            app.spectrum_picker = Some(picker);
-        }
-        Err(_) => {
-            // Fallback to default font size (common 8x16 in most terminals)
-            let mut picker = ratatui_image::picker::Picker::new((8, 16));
-            picker.guess_protocol();
-            app.spectrum_picker = Some(picker);
-        }
-    }
-
     // Spawn processing thread
     let processing = ProcessingHandle::spawn();
 
@@ -127,27 +112,6 @@ fn main() -> io::Result<()> {
                         // try_read failed — spectrum will not update until lock is available
                     }
                 }
-            }
-        }
-
-        // Render spectrum as pixel image if picker is available
-        if let Some(ref mut picker) = app.spectrum_picker {
-            if !app.spectrum_bins.is_empty() {
-                // Use reasonable pixel dimensions for good detail
-                let spectrum_height = 128u32;
-                let spectrum_width = 256u32;
-
-                let rgba_img = voiceforge::ui::spectrum::spectrum_to_image(
-                    &app.spectrum_bins,
-                    spectrum_width,
-                    spectrum_height,
-                );
-
-                let dynamic_img = image::DynamicImage::ImageRgba8(rgba_img);
-                app.spectrum_state = Some(picker.new_resize_protocol(dynamic_img));
-            } else {
-                // Spectrum bins empty — will show Unicode fallback
-                app.spectrum_state = None;
             }
         }
 
@@ -271,7 +235,6 @@ fn main() -> io::Result<()> {
                                 _stream = Some(stream);
                                 app.status_message = None;
                                 app.spectrum_bins.clear();
-                                app.spectrum_state = None;
                                 // M-1: Reset debounce timers on file load to prevent
                                 // stale Resynthesize from firing before Analyze completes.
                                 resynth_pending = None;

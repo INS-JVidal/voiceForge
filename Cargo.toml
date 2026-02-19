@@ -15,8 +15,6 @@ symphonia = { version = "0.5", features = ["mp3", "wav", "pcm", "flac"] }
 ratatui = "0.30"
 rustfft = "6.4"
 hound = "3.5"
-ratatui-image = { version = "0.10", default-features = false, features = ["crossterm", "image-defaults", "rustix"] }
-image = { version = "0.24", default-features = false, features = ["png"] }
 signal-hook = "0.4"
 
 # L-6: Release profile optimizations for real-time audio DSP.
