@@ -77,6 +77,7 @@ pub fn render(frame: &mut Frame, app: &mut AppState) {
         &app.world_sliders,
         world_selected,
         app.focus == PanelFocus::WorldSliders,
+        app.world_bypass,
     );
 
     let effects_selected = if app.focus == PanelFocus::EffectsSliders {
@@ -91,6 +92,7 @@ pub fn render(frame: &mut Frame, app: &mut AppState) {
         &app.effects_sliders,
         effects_selected,
         app.focus == PanelFocus::EffectsSliders,
+        false,
     );
 
     let master_selected = if app.focus == PanelFocus::Master {
@@ -105,6 +107,7 @@ pub fn render(frame: &mut Frame, app: &mut AppState) {
         &app.master_sliders,
         master_selected,
         app.focus == PanelFocus::Master,
+        false,
     );
 
     // EQ panel

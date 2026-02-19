@@ -35,7 +35,11 @@ fn partial_block_char(frac: f64) -> &'static str {
 
 /// Computes gradient color across the slider from dark (left) to bright (right).
 /// Interpolates linearly based on position `t` (0.0 at left, 1.0 at right).
-fn gradient_color(t: f64, is_selected: bool, focused: bool) -> Color {
+fn gradient_color(t: f64, is_selected: bool, focused: bool, dimmed: bool) -> Color {
+    if dimmed {
+        let lerp = |a: u8, b: u8| (a as f64 + (b as f64 - a as f64) * t).round() as u8;
+        return Color::Rgb(lerp(30, 110), lerp(30, 110), lerp(30, 110));
+    }
     let (from, to) = if focused && is_selected {
         // Cyan gradient: dark cyan → bright cyan
         ((0u8, 60u8, 80u8), (0u8, 220u8, 255u8))
@@ -63,8 +67,15 @@ pub fn render(
     sliders: &[SliderDef],
     selected: Option<usize>,
     focused: bool,
+    dimmed: bool,
 ) {
-    let border_color = if focused { Color::Cyan } else { Color::White };
+    let border_color = if dimmed {
+        Color::DarkGray
+    } else if focused {
+        Color::Cyan
+    } else {
+        Color::White
+    };
     let block = Block::default()
         .title(format!(" {title} "))
         .borders(Borders::ALL)
@@ -81,7 +92,9 @@ pub fn render(
     for (i, slider) in sliders.iter().enumerate() {
         let is_selected = selected == Some(i) && focused;
 
-        let label_style = if is_selected {
+        let label_style = if dimmed {
+            Style::default().fg(Color::DarkGray)
+        } else if is_selected {
             Style::default()
                 .fg(Color::Cyan)
                 .add_modifier(Modifier::BOLD)
@@ -129,7 +142,7 @@ pub fn render(
                 let ch = block_char_for_pos(i, filled);
                 spans.push(Span::styled(
                     ch,
-                    Style::default().fg(gradient_color(t, is_selected, focused)),
+                    Style::default().fg(gradient_color(t, is_selected, focused, dimmed)),
                 ));
             }
 
@@ -142,7 +155,7 @@ pub fn render(
                 };
                 spans.push(Span::styled(
                     partial,
-                    Style::default().fg(gradient_color(t, is_selected, focused)),
+                    Style::default().fg(gradient_color(t, is_selected, focused, dimmed)),
                 ));
             }
 
@@ -157,7 +170,7 @@ pub fn render(
             }
 
             spans.push(Span::raw("] "));
-            spans.push(Span::styled(value_str, Style::default().fg(Color::Yellow)));
+            spans.push(Span::styled(value_str, Style::default().fg(if dimmed { Color::DarkGray } else { Color::Yellow })));
 
             let bar_line = Line::from(spans);
             lines.push(bar_line);
@@ -165,7 +178,7 @@ pub fn render(
             // Narrow fallback: just show value
             let val_line = Line::from(vec![
                 Span::raw("  "),
-                Span::styled(value_str, Style::default().fg(Color::Yellow)),
+                Span::styled(value_str, Style::default().fg(if dimmed { Color::DarkGray } else { Color::Yellow })),
             ]);
             lines.push(val_line);
         }
