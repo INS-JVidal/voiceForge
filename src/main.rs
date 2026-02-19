@@ -35,8 +35,9 @@ impl Drop for TerminalGuard {
     }
 }
 
-/// Debounce delay for resynthesize commands.
+/// Debounce delay for resynthesize / effects commands.
 const RESYNTH_DEBOUNCE: Duration = Duration::from_millis(150);
+const EFFECTS_DEBOUNCE: Duration = Duration::from_millis(80);
 
 fn main() -> io::Result<()> {
     // Set up terminal
@@ -54,8 +55,9 @@ fn main() -> io::Result<()> {
     // Keep stream alive in main — it's not Send so can't go into AppState.
     let mut _stream: Option<cpal::Stream> = None;
 
-    // Debounce timer for resynthesize
+    // Debounce timers for resynthesize and effects
     let mut resynth_pending: Option<Instant> = None;
+    let mut effects_pending: Option<Instant> = None;
 
     let args: Vec<String> = std::env::args().collect();
     if args.len() >= 2 {
@@ -102,7 +104,8 @@ fn main() -> io::Result<()> {
                     app.original_audio = Some(Arc::new(mono_original));
                     // Auto-resynthesize with current slider values
                     let values = app.world_slider_values();
-                    processing.send(ProcessingCommand::Resynthesize(values));
+                    let fx = app.effects_params();
+                    processing.send(ProcessingCommand::Resynthesize(values, fx));
                 }
                 ProcessingResult::SynthesisDone(audio_data) => {
                     app.processing_status = None;
@@ -175,12 +178,21 @@ fn main() -> io::Result<()> {
             }
         }
 
-        // Check debounce timer
+        // Check debounce timers
         if let Some(deadline) = resynth_pending {
             if Instant::now() >= deadline {
                 resynth_pending = None;
+                effects_pending = None; // Resynthesize includes effects
                 let values = app.world_slider_values();
-                processing.send(ProcessingCommand::Resynthesize(values));
+                let fx = app.effects_params();
+                processing.send(ProcessingCommand::Resynthesize(values, fx));
+            }
+        }
+        if let Some(deadline) = effects_pending {
+            if Instant::now() >= deadline {
+                effects_pending = None;
+                let fx = app.effects_params();
+                processing.send(ProcessingCommand::ReapplyEffects(fx));
             }
         }
 
@@ -213,6 +225,9 @@ fn main() -> io::Result<()> {
                         Action::Resynthesize => {
                             // Debounce: reset timer on each slider change
                             resynth_pending = Some(Instant::now() + RESYNTH_DEBOUNCE);
+                        }
+                        Action::ReapplyEffects => {
+                            effects_pending = Some(Instant::now() + EFFECTS_DEBOUNCE);
                         }
                         Action::ToggleAB => {
                             // ab_original was already flipped by the handler

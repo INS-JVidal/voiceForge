@@ -1,5 +1,6 @@
 use crate::audio::decoder::AudioData;
 use crate::audio::playback::PlaybackState;
+use crate::dsp::effects::EffectsParams;
 use crate::dsp::modifier::WorldSliderValues;
 use std::sync::Arc;
 
@@ -35,6 +36,7 @@ pub enum Action {
     Quit,
     LoadFile(String),
     Resynthesize,
+    ReapplyEffects,
     ToggleAB,
 }
 
@@ -267,6 +269,19 @@ impl AppState {
     /// Number of sliders in the currently focused panel.
     pub fn focused_slider_count(&self) -> usize {
         self.focused_sliders().len()
+    }
+
+    /// Extract current effects slider values.
+    pub fn effects_params(&self) -> EffectsParams {
+        let s = &self.effects_sliders;
+        EffectsParams {
+            gain_db: s[0].value as f32,
+            low_cut_hz: s[1].value as f32,
+            high_cut_hz: s[2].value as f32,
+            compressor_thresh_db: s[3].value as f32,
+            reverb_mix: s[4].value as f32,
+            pitch_shift_semitones: s[5].value as f32,
+        }
     }
 
     /// Extract current WORLD slider values for the modifier.

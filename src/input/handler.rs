@@ -110,10 +110,10 @@ fn handle_normal(key: KeyEvent, app: &mut AppState) -> Option<Action> {
                         sliders[idx].adjust(steps);
                     }
                 }
-                if focus == PanelFocus::WorldSliders {
-                    Some(Action::Resynthesize)
-                } else {
-                    None
+                match focus {
+                    PanelFocus::WorldSliders => Some(Action::Resynthesize),
+                    PanelFocus::EffectsSliders => Some(Action::ReapplyEffects),
+                    PanelFocus::Transport => None,
                 }
             }
         }
@@ -141,10 +141,10 @@ fn handle_normal(key: KeyEvent, app: &mut AppState) -> Option<Action> {
                         sliders[idx].adjust(steps);
                     }
                 }
-                if focus == PanelFocus::WorldSliders {
-                    Some(Action::Resynthesize)
-                } else {
-                    None
+                match focus {
+                    PanelFocus::WorldSliders => Some(Action::Resynthesize),
+                    PanelFocus::EffectsSliders => Some(Action::ReapplyEffects),
+                    PanelFocus::Transport => None,
                 }
             }
         }

@@ -1,0 +1,187 @@
+use voiceforge::dsp::effects::{apply_effects, EffectsParams};
+
+fn sine_wave(freq: f32, sample_rate: u32, num_samples: usize) -> Vec<f32> {
+    (0..num_samples)
+        .map(|i| (2.0 * std::f32::consts::PI * freq * i as f32 / sample_rate as f32).sin())
+        .collect()
+}
+
+fn rms(samples: &[f32]) -> f32 {
+    (samples.iter().map(|s| s * s).sum::<f32>() / samples.len() as f32).sqrt()
+}
+
+#[test]
+fn test_effects_neutral_passthrough() {
+    let input = sine_wave(440.0, 44100, 4096);
+    let params = EffectsParams::default();
+    assert!(params.is_neutral());
+    let output = apply_effects(&input, 44100, &params);
+    assert_eq!(output, input);
+}
+
+#[test]
+fn test_effects_gain_plus_6db() {
+    let input = sine_wave(440.0, 44100, 4096);
+    let params = EffectsParams {
+        gain_db: 6.0,
+        ..Default::default()
+    };
+    let output = apply_effects(&input, 44100, &params);
+    let ratio = rms(&output) / rms(&input);
+    // +6 dB ≈ 2x amplitude
+    assert!(
+        (ratio - 2.0).abs() < 0.1,
+        "gain ratio {ratio}, expected ~2.0"
+    );
+}
+
+#[test]
+fn test_effects_gain_minus_12db() {
+    let input = sine_wave(440.0, 44100, 4096);
+    let params = EffectsParams {
+        gain_db: -12.0,
+        ..Default::default()
+    };
+    let output = apply_effects(&input, 44100, &params);
+    let ratio = rms(&output) / rms(&input);
+    // -12 dB ≈ 0.25x amplitude
+    assert!(
+        (ratio - 0.25).abs() < 0.03,
+        "gain ratio {ratio}, expected ~0.25"
+    );
+}
+
+#[test]
+fn test_effects_lowcut_attenuates_bass() {
+    let sr = 44100;
+    // 100 Hz tone through 500 Hz highpass — should be heavily attenuated
+    let input = sine_wave(100.0, sr, 44100);
+    let params = EffectsParams {
+        low_cut_hz: 500.0,
+        ..Default::default()
+    };
+    let output = apply_effects(&input, sr, &params);
+    // Skip the first 1000 samples for filter settling
+    let rms_in = rms(&input[1000..]);
+    let rms_out = rms(&output[1000..]);
+    assert!(
+        rms_out < rms_in * 0.3,
+        "100 Hz should be attenuated by 500 Hz highpass: in={rms_in}, out={rms_out}"
+    );
+}
+
+#[test]
+fn test_effects_highcut_attenuates_treble() {
+    let sr = 44100;
+    // 8000 Hz tone through 2000 Hz lowpass — should be heavily attenuated
+    let input = sine_wave(8000.0, sr, 44100);
+    let params = EffectsParams {
+        high_cut_hz: 2000.0,
+        ..Default::default()
+    };
+    let output = apply_effects(&input, sr, &params);
+    let rms_in = rms(&input[1000..]);
+    let rms_out = rms(&output[1000..]);
+    assert!(
+        rms_out < rms_in * 0.3,
+        "8000 Hz should be attenuated by 2000 Hz lowpass: in={rms_in}, out={rms_out}"
+    );
+}
+
+#[test]
+fn test_effects_compressor_reduces_dynamics() {
+    let sr = 44100;
+    // Loud signal at -6 dBFS with threshold at -20 dB
+    let input: Vec<f32> = sine_wave(440.0, sr, 44100)
+        .iter()
+        .map(|s| s * 0.5) // ~-6 dBFS
+        .collect();
+    let params = EffectsParams {
+        compressor_thresh_db: -20.0,
+        ..Default::default()
+    };
+    let output = apply_effects(&input, sr, &params);
+    // With makeup gain, output should be roughly similar level but compressed
+    // Just verify it ran without panic and produced non-zero output
+    let rms_out = rms(&output[1000..]);
+    assert!(rms_out > 0.01, "compressor output should not be silent: {rms_out}");
+}
+
+#[test]
+fn test_effects_pitch_shift_up() {
+    let sr = 44100;
+    let input = sine_wave(440.0, sr, 44100);
+    let params = EffectsParams {
+        pitch_shift_semitones: 12.0,
+        ..Default::default()
+    };
+    let output = apply_effects(&input, sr, &params);
+    // +12 semitones = 2x frequency → buffer should be ~half length
+    let ratio = output.len() as f32 / input.len() as f32;
+    assert!(
+        (ratio - 0.5).abs() < 0.01,
+        "buffer length ratio {ratio}, expected ~0.5"
+    );
+}
+
+#[test]
+fn test_effects_pitch_shift_down() {
+    let sr = 44100;
+    let input = sine_wave(440.0, sr, 44100);
+    let params = EffectsParams {
+        pitch_shift_semitones: -12.0,
+        ..Default::default()
+    };
+    let output = apply_effects(&input, sr, &params);
+    // -12 semitones = 0.5x frequency → buffer should be ~double length
+    let ratio = output.len() as f32 / input.len() as f32;
+    assert!(
+        (ratio - 2.0).abs() < 0.01,
+        "buffer length ratio {ratio}, expected ~2.0"
+    );
+}
+
+#[test]
+fn test_effects_reverb_differs_from_dry() {
+    let sr = 44100;
+    let input = sine_wave(440.0, sr, 44100);
+    let params = EffectsParams {
+        reverb_mix: 0.5,
+        ..Default::default()
+    };
+    let output = apply_effects(&input, sr, &params);
+    assert_eq!(output.len(), input.len());
+    // Reverb should produce a different signal
+    let diff: f32 = input
+        .iter()
+        .zip(output.iter())
+        .map(|(a, b)| (a - b).abs())
+        .sum::<f32>()
+        / input.len() as f32;
+    assert!(diff > 0.01, "reverb output should differ from dry: avg diff = {diff}");
+}
+
+#[test]
+fn test_effects_empty_input() {
+    let params = EffectsParams {
+        gain_db: 6.0,
+        ..Default::default()
+    };
+    let output = apply_effects(&[], 44100, &params);
+    assert!(output.is_empty());
+}
+
+#[test]
+fn test_effects_is_neutral() {
+    assert!(EffectsParams::default().is_neutral());
+    assert!(!EffectsParams {
+        gain_db: 1.0,
+        ..Default::default()
+    }
+    .is_neutral());
+    assert!(!EffectsParams {
+        reverb_mix: 0.1,
+        ..Default::default()
+    }
+    .is_neutral());
+}
