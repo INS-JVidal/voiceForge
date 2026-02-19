@@ -122,6 +122,7 @@ fn render_unicode_fallback(frame: &mut Frame, area: Rect, app: &AppState) {
             81..=120 => &[
                 (100.0, "100"),
                 (1000.0, "1k"),
+                (5000.0, "5k"),
                 (10000.0, "10k"),
                 (20000.0, "20k"),
             ],
