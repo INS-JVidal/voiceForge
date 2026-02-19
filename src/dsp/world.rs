@@ -61,12 +61,19 @@ pub fn to_mono(audio: &AudioData) -> AudioData {
     }
 }
 
-/// Analyze audio using WORLD vocoder. Converts to mono f64 internally.
+/// Analyze audio using WORLD vocoder with progress callback. Converts to mono f64 internally.
+/// The callback is called at 25%, 50%, 75%, and 100% completion.
 ///
 /// # Errors
 ///
 /// Returns an error if audio is empty or has zero channels.
-pub fn analyze(audio: &AudioData) -> Result<WorldParams, world_sys::WorldError> {
+pub fn analyze_with_progress<F>(
+    audio: &AudioData,
+    on_stage: F,
+) -> Result<WorldParams, world_sys::WorldError>
+where
+    F: FnMut(u8),
+{
     let mono = to_mono_f64(audio);
     // H-3: Guard against empty audio before the FFI call, which would panic.
     if mono.is_empty() {
@@ -79,7 +86,20 @@ pub fn analyze(audio: &AudioData) -> Result<WorldParams, world_sys::WorldError> 
             "sample_rate must be positive".into(),
         ));
     }
-    Ok(world_sys::analyze(&mono, audio.sample_rate as i32))
+    Ok(world_sys::analyze_with_progress(
+        &mono,
+        audio.sample_rate as i32,
+        on_stage,
+    ))
+}
+
+/// Analyze audio using WORLD vocoder. Converts to mono f64 internally.
+///
+/// # Errors
+///
+/// Returns an error if audio is empty or has zero channels.
+pub fn analyze(audio: &AudioData) -> Result<WorldParams, world_sys::WorldError> {
+    analyze_with_progress(audio, |_| {})
 }
 
 /// Synthesize audio from WORLD parameters. Returns mono AudioData.

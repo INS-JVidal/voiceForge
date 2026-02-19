@@ -106,13 +106,17 @@ impl WorldParams {
 }
 
 /// Analyze audio using WORLD vocoder (DIO -> StoneMask -> CheapTrick -> D4C).
+/// Accepts a callback to report progress (called at 25%, 50%, 75%, 100%).
 ///
 /// # Panics
 ///
 /// Panics if `audio` is empty, `sample_rate` is not positive, or `audio` length
 /// exceeds `i32::MAX`.
 #[must_use]
-pub fn analyze(audio: &[f64], sample_rate: i32) -> WorldParams {
+pub fn analyze_with_progress<F>(audio: &[f64], sample_rate: i32, mut on_stage: F) -> WorldParams
+where
+    F: FnMut(u8),
+{
     assert!(!audio.is_empty(), "audio must not be empty");
     assert!(sample_rate > 0, "sample_rate must be positive");
     assert!(
@@ -149,6 +153,7 @@ pub fn analyze(audio: &[f64], sample_rate: i32) -> WorldParams {
             f0.as_mut_ptr(),
         );
     }
+    on_stage(25);
 
     // Refine f0 with StoneMask
     let mut refined_f0 = vec![0.0f64; f0_length];
@@ -163,6 +168,7 @@ pub fn analyze(audio: &[f64], sample_rate: i32) -> WorldParams {
             refined_f0.as_mut_ptr(),
         );
     }
+    on_stage(50);
 
     // Initialize CheapTrick options and get FFT size
     let mut ct_option = unsafe { init_option_with_fs(InitializeCheapTrickOption, fs) };
@@ -187,6 +193,7 @@ pub fn analyze(audio: &[f64], sample_rate: i32) -> WorldParams {
             sp_ptrs.as_mut_ptr(),
         );
     }
+    on_stage(75);
 
     // Initialize D4C options
     let d4c_option = unsafe { init_option(InitializeD4COption) };
@@ -208,6 +215,7 @@ pub fn analyze(audio: &[f64], sample_rate: i32) -> WorldParams {
             ap_ptrs.as_mut_ptr(),
         );
     }
+    on_stage(100);
 
     // M-4: Runtime check (not debug_assert) for non-finite f0 values.
     // WORLD can produce NaN on silent or very short audio.
@@ -225,6 +233,17 @@ pub fn analyze(audio: &[f64], sample_rate: i32) -> WorldParams {
         fft_size,
         frame_period,
     }
+}
+
+/// Analyze audio using WORLD vocoder (DIO -> StoneMask -> CheapTrick -> D4C).
+///
+/// # Panics
+///
+/// Panics if `audio` is empty, `sample_rate` is not positive, or `audio` length
+/// exceeds `i32::MAX`.
+#[must_use]
+pub fn analyze(audio: &[f64], sample_rate: i32) -> WorldParams {
+    analyze_with_progress(audio, sample_rate, |_| {})
 }
 
 /// Synthesize audio from WORLD parameters.

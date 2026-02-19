@@ -91,11 +91,15 @@ fn main() -> io::Result<()> {
     let mut resynth_pending: Option<Instant> = None;
     let mut effects_pending: Option<Instant> = None;
 
+    // Track current file path for LoadFile action
+    let mut current_file_path: Option<String> = None;
+
     let args: Vec<String> = std::env::args().collect();
     if args.len() >= 2 {
         match load_file(&args[1], &mut app) {
             Ok(stream) => {
                 _stream = Some(stream);
+                current_file_path = Some(args[1].clone());
                 // Send audio for WORLD analysis
                 if let Some(ref audio) = app.audio_data {
                     processing.send(ProcessingCommand::Analyze(Arc::clone(audio)));
@@ -153,6 +157,35 @@ fn main() -> io::Result<()> {
         // Poll for processing results (non-blocking)
         while let Some(result) = processing.try_recv() {
             match result {
+                ProcessingResult::AudioReady(audio_data) => {
+                    let audio = Arc::new(audio_data);
+                    // Build file info from the decoded audio
+                    if let Some(ref path) = current_file_path {
+                        if let Some(file_info) = build_file_info(path, &audio) {
+                            match audio::playback::start_playback(Arc::clone(&audio)) {
+                                Ok((stream, state)) => {
+                                    _stream = Some(stream);
+                                    app.playback = state;
+                                    // Restore live gain and loop from sliders
+                                    let gain_db = app.effects_sliders[0].value as f32;
+                                    app.playback.live_gain.store(
+                                        10.0_f32.powf(gain_db / 20.0).to_bits(),
+                                        std::sync::atomic::Ordering::Relaxed,
+                                    );
+                                    app.playback.loop_enabled.store(
+                                        app.loop_enabled,
+                                        std::sync::atomic::Ordering::Relaxed,
+                                    );
+                                    app.file_info = Some(file_info);
+                                    app.audio_data = Some(audio);
+                                }
+                                Err(e) => {
+                                    app.set_status(format!("Playback error: {e}"));
+                                }
+                            }
+                        }
+                    }
+                }
                 ProcessingResult::AnalysisDone(mono_original) => {
                     app.processing_status = None;
                     app.original_audio = Some(Arc::new(mono_original));
@@ -257,9 +290,13 @@ fn main() -> io::Result<()> {
                 if let Some(action) = handle_key_event(key, &mut app) {
                     match action {
                         Action::Quit => break,
-                        Action::LoadFile(path) => match load_file(&path, &mut app) {
-                            Ok(stream) => {
-                                _stream = Some(stream);
+                        Action::LoadFile(path) => {
+                            let p = Path::new(&path);
+                            if !p.exists() || !p.is_file() {
+                                app.set_status(format!("Error: file not found: {path}"));
+                            } else {
+                                current_file_path = Some(path.clone());
+                                app.processing_status = Some("Loading file...".to_string());
                                 app.status_message = None;
                                 app.spectrum_bins.clear();
                                 // M-1: Reset debounce timers on file load to prevent
@@ -269,16 +306,9 @@ fn main() -> io::Result<()> {
                                 // Reset A/B state for new file
                                 app.ab_original = false;
                                 app.original_audio = None;
-                                // Send audio for WORLD analysis
-                                if let Some(ref audio) = app.audio_data {
-                                    processing
-                                        .send(ProcessingCommand::Analyze(Arc::clone(audio)));
-                                }
+                                processing.send(ProcessingCommand::Load(path));
                             }
-                            Err(e) => {
-                                app.set_status(format!("Error: {e}"));
-                            }
-                        },
+                        }
                         Action::Resynthesize => {
                             // Debounce: reset timer on each slider change
                             resynth_pending = Some(Instant::now() + RESYNTH_DEBOUNCE);
@@ -377,10 +407,35 @@ fn main() -> io::Result<()> {
         }
     }
 
-    processing.shutdown();
+    // Q06: Check exit reason — graceful vs force quit
+    if sigint.load(Ordering::Relaxed) {
+        // Ctrl+C: abandon the processing thread (detach, non-blocking)
+        processing.abandon();
+    } else {
+        // Normal quit: graceful shutdown (wait for thread)
+        processing.shutdown();
+    }
 
     Ok(())
     // _guard Drop restores terminal
+}
+
+/// Build FileInfo from a file path and decoded audio data.
+fn build_file_info(path: &str, audio: &Arc<audio::decoder::AudioData>) -> Option<FileInfo> {
+    let p = Path::new(path);
+    Some(FileInfo {
+        name: p
+            .file_name()
+            .and_then(|n| n.to_str())
+            .unwrap_or("unknown")
+            .to_string(),
+        path: p.to_string_lossy().into_owned(),
+        sample_rate: audio.sample_rate,
+        channels: audio.channels,
+        original_channels: audio.channels,
+        duration_secs: audio.duration_secs(),
+        total_samples: audio.samples.len(),
+    })
 }
 
 /// Decode and start playback for a file. Updates app state and returns the cpal Stream.
@@ -395,19 +450,8 @@ fn load_file(path: &str, app: &mut AppState) -> Result<cpal::Stream, Box<dyn std
     }
     let audio_data = audio::decoder::decode_file(path)?;
 
-    let file_info = FileInfo {
-        name: path
-            .file_name()
-            .and_then(|n| n.to_str())
-            .unwrap_or("unknown")
-            .to_string(),
-        path: path.to_string_lossy().into_owned(),
-        sample_rate: audio_data.sample_rate,
-        channels: audio_data.channels,
-        original_channels: audio_data.channels,
-        duration_secs: audio_data.duration_secs(),
-        total_samples: audio_data.samples.len(),
-    };
+    let file_info = build_file_info(&path.to_string_lossy(), &Arc::new(audio_data.clone()))
+        .ok_or("Failed to build file info")?;
 
     let audio = Arc::new(audio_data);
     let (stream, state) = audio::playback::start_playback(Arc::clone(&audio))?;

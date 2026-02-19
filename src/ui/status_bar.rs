@@ -6,6 +6,18 @@ use ratatui::Frame;
 
 use crate::app::AppState;
 
+/// Animated spinner characters for progress indication.
+const SPINNER: [&str; 10] = ["⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"];
+
+/// Get the current spinner frame based on elapsed time.
+fn spinner_frame() -> &'static str {
+    let idx = (std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap_or_default()
+        .subsec_millis() / 100) as usize % 10;
+    SPINNER[idx]
+}
+
 pub fn render(frame: &mut Frame, area: Rect, app: &AppState) {
     let line = if let Some(ref info) = app.file_info {
         // #13: Clamp to avoid truncation for very long audio (>71 min wraps u32).
@@ -36,7 +48,10 @@ pub fn render(frame: &mut Frame, area: Rect, app: &AppState) {
         ];
         if let Some(ref status) = app.processing_status {
             spans.push(Span::styled(" │ ", Style::default().fg(Color::DarkGray)));
-            spans.push(Span::styled(status, Style::default().fg(Color::Yellow)));
+            spans.push(Span::styled(
+                format!("{} {}", spinner_frame(), status),
+                Style::default().fg(Color::Yellow),
+            ));
         }
         if let Some(ref msg) = app.status_message {
             spans.push(Span::styled(" │ ", Style::default().fg(Color::DarkGray)));

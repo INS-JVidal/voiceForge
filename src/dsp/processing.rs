@@ -1,10 +1,11 @@
 use std::panic;
+use std::path::Path;
 use std::sync::Arc;
 use std::thread;
 
 use crossbeam_channel::{Receiver, Sender};
 
-use crate::audio::decoder::AudioData;
+use crate::audio::decoder::{self, AudioData};
 use crate::dsp::effects::{self, EffectsParams};
 use crate::dsp::modifier::{self, WorldSliderValues};
 use crate::dsp::world;
@@ -12,6 +13,7 @@ use world_sys::WorldParams;
 
 /// Commands sent from the main thread to the processing thread.
 pub enum ProcessingCommand {
+    Load(String),                                      // NEW: path to decode
     Analyze(Arc<AudioData>),
     Resynthesize(WorldSliderValues, EffectsParams),
     ReapplyEffects(EffectsParams),
@@ -20,6 +22,7 @@ pub enum ProcessingCommand {
 
 /// Results sent from the processing thread back to the main thread.
 pub enum ProcessingResult {
+    AudioReady(AudioData),                            // NEW: decoded audio
     AnalysisDone(AudioData),
     SynthesisDone(AudioData),
     Status(String),
@@ -30,6 +33,7 @@ pub struct ProcessingHandle {
     cmd_tx: Sender<ProcessingCommand>,
     result_rx: Receiver<ProcessingResult>,
     thread: Option<thread::JoinHandle<()>>,
+    abandon: bool,                                     // NEW: skip join on drop
 }
 
 impl ProcessingHandle {
@@ -46,6 +50,7 @@ impl ProcessingHandle {
             cmd_tx,
             result_rx,
             thread: Some(thread),
+            abandon: false,
         }
     }
 
@@ -66,10 +71,22 @@ impl ProcessingHandle {
             let _ = handle.join();
         }
     }
+
+    /// Abandon the processing thread without waiting (detach on drop).
+    /// Used for non-blocking Ctrl+C exit. The thread dies when the process exits.
+    pub fn abandon(mut self) {
+        self.abandon = true;
+        let _ = self.cmd_tx.send(ProcessingCommand::Shutdown); // signal thread to stop
+        // JoinHandle is dropped in Drop without joining
+    }
 }
 
 impl Drop for ProcessingHandle {
     fn drop(&mut self) {
+        if self.abandon {
+            self.thread.take(); // Drop JoinHandle → detaches thread
+            return;
+        }
         let _ = self.cmd_tx.send(ProcessingCommand::Shutdown);
         if let Some(handle) = self.thread.take() {
             let _ = handle.join();
@@ -86,10 +103,12 @@ fn run_analyze(
     original_mono: &mut Option<AudioData>,
     post_world_audio: &mut Option<AudioData>,
 ) -> bool {
-    let _ = result_tx.send(ProcessingResult::Status("Analyzing...".into()));
     *sample_rate = audio.sample_rate;
     log::info!("analyze: {} samples @ {}Hz", audio.samples.len(), audio.sample_rate);
-    match world::analyze(audio) {
+    let result_tx_clone = result_tx.clone();
+    match world::analyze_with_progress(audio, move |pct| {
+        let _ = result_tx_clone.send(ProcessingResult::Status(format!("Analyzing... {pct}%")));
+    }) {
         Ok(params) => {
             log::info!("analyze: done — {} f0 frames", params.f0.len());
             *cached_params = Some(params);
@@ -125,13 +144,17 @@ fn run_resynthesize(
             return false;
         }
     } else {
-        let _ = result_tx.send(ProcessingResult::Status("Processing...".into()));
+        // Stage 1: Modify parameters
+        let _ = result_tx.send(ProcessingResult::Status("Modifying parameters... (1/3)".into()));
         // M-11: Use if-let instead of unwrap() for structural safety.
         let params = match cached_params.as_ref() {
             Some(p) => p,
             None => return false,
         };
         let modified = modifier::apply(params, latest_world);
+
+        // Stage 2: Synthesize voice
+        let _ = result_tx.send(ProcessingResult::Status("Synthesizing voice... (2/3)".into()));
         match world::synthesize(&modified, sample_rate) {
             Ok(audio) => audio,
             Err(e) => {
@@ -142,6 +165,8 @@ fn run_resynthesize(
         }
     };
 
+    // Stage 3: Apply effects
+    let _ = result_tx.send(ProcessingResult::Status("Applying effects... (3/3)".into()));
     *post_world_audio = Some(world_audio.clone());
     let final_audio = apply_fx_chain(&world_audio, latest_fx);
     let _ = result_tx.send(ProcessingResult::SynthesisDone(final_audio));
@@ -205,6 +230,28 @@ fn handle_command(
     sample_rate: &mut u32,
 ) -> bool {
     match cmd {
+        ProcessingCommand::Load(path) => {
+            let _ = result_tx.send(ProcessingResult::Status("Loading file...".into()));
+            match decoder::decode_file(Path::new(&path)) {
+                Ok(audio_data) => {
+                    let audio = Arc::new(audio_data.clone());
+                    let _ = result_tx.send(ProcessingResult::AudioReady(audio_data));
+                    // Immediately kick off analysis
+                    run_analyze(
+                        &audio,
+                        result_tx,
+                        sample_rate,
+                        cached_params,
+                        original_mono,
+                        post_world_audio,
+                    );
+                }
+                Err(e) => {
+                    log::error!("load: failed — {e}");
+                    let _ = result_tx.send(ProcessingResult::Status(format!("Load error: {e}")));
+                }
+            }
+        }
         ProcessingCommand::Analyze(audio) => {
             run_analyze(
                 &audio, result_tx, sample_rate, cached_params, original_mono, post_world_audio,
@@ -228,6 +275,30 @@ fn handle_command(
                         latest_fx = newer_fx;
                     }
                     Ok(ProcessingCommand::Shutdown) => return true,
+                    Ok(ProcessingCommand::Load(path)) => {
+                        let _ = result_tx.send(ProcessingResult::Status("Loading file...".into()));
+                        match decoder::decode_file(Path::new(&path)) {
+                            Ok(audio_data) => {
+                                let audio = Arc::new(audio_data.clone());
+                                let _ = result_tx.send(ProcessingResult::AudioReady(audio_data));
+                                run_analyze(
+                                    &audio,
+                                    result_tx,
+                                    sample_rate,
+                                    cached_params,
+                                    original_mono,
+                                    post_world_audio,
+                                );
+                            }
+                            Err(e) => {
+                                log::error!("load: failed — {e}");
+                                let _ =
+                                    result_tx.send(ProcessingResult::Status(format!("Load error: {e}")));
+                            }
+                        }
+                        // Don't continue draining — new file loaded, abort pending resynth
+                        return false;
+                    }
                     Ok(ProcessingCommand::Analyze(audio)) => {
                         run_analyze(
                             &audio,
@@ -261,6 +332,29 @@ fn handle_command(
                     Ok(ProcessingCommand::ReapplyEffects(newer)) => {
                         latest_fx = newer;
                     }
+                    Ok(ProcessingCommand::Load(path)) => {
+                        let _ = result_tx.send(ProcessingResult::Status("Loading file...".into()));
+                        match decoder::decode_file(Path::new(&path)) {
+                            Ok(audio_data) => {
+                                let audio = Arc::new(audio_data.clone());
+                                let _ = result_tx.send(ProcessingResult::AudioReady(audio_data));
+                                run_analyze(
+                                    &audio,
+                                    result_tx,
+                                    sample_rate,
+                                    cached_params,
+                                    original_mono,
+                                    post_world_audio,
+                                );
+                            }
+                            Err(e) => {
+                                log::error!("load: failed — {e}");
+                                let _ =
+                                    result_tx.send(ProcessingResult::Status(format!("Load error: {e}")));
+                            }
+                        }
+                        return false;
+                    }
                     Ok(ProcessingCommand::Resynthesize(world_vals, fx_vals)) => {
                         // Full resynthesis supersedes effects-only.
                         // Drain further and run resynthesize.
@@ -276,6 +370,33 @@ fn handle_command(
                                     lf = fx;
                                 }
                                 Ok(ProcessingCommand::Shutdown) => return true,
+                                Ok(ProcessingCommand::Load(path)) => {
+                                    let _ = result_tx
+                                        .send(ProcessingResult::Status("Loading file...".into()));
+                                    match decoder::decode_file(Path::new(&path)) {
+                                        Ok(audio_data) => {
+                                            let audio = Arc::new(audio_data.clone());
+                                            let _ = result_tx.send(ProcessingResult::AudioReady(
+                                                audio_data,
+                                            ));
+                                            run_analyze(
+                                                &audio,
+                                                result_tx,
+                                                sample_rate,
+                                                cached_params,
+                                                original_mono,
+                                                post_world_audio,
+                                            );
+                                        }
+                                        Err(e) => {
+                                            log::error!("load: failed — {e}");
+                                            let _ = result_tx.send(ProcessingResult::Status(
+                                                format!("Load error: {e}"),
+                                            ));
+                                        }
+                                    }
+                                    return false;
+                                }
                                 Ok(ProcessingCommand::Analyze(audio)) => {
                                     run_analyze(
                                         &audio,
