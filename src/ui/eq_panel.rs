@@ -82,8 +82,8 @@ pub fn render(
 
             if is_zero_line {
                 // 0 dB line
-                let marker = if band_idx == selected_band { "▸" } else { "─" };
-                let style = if band_idx == selected_band {
+                let marker = if focused && band_idx == selected_band { "▸" } else { "─" };
+                let style = if focused && band_idx == selected_band {
                     Style::default().fg(Color::Cyan)
                 } else {
                     Style::default().fg(Color::Gray)
@@ -140,7 +140,7 @@ pub fn render(
 
         // Render frequency label at bottom
         let freq_label = EQ_FREQS[band_idx];
-        let freq_style = if band_idx == selected_band {
+        let freq_style = if focused && band_idx == selected_band {
             Style::default().fg(Color::Cyan).add_modifier(Modifier::BOLD)
         } else {
             Style::default().fg(Color::Gray)
@@ -159,7 +159,7 @@ pub fn render(
 
         // Render value label at top
         let gain_str = format!("{:+.1}", gain);
-        let val_style = if band_idx == selected_band {
+        let val_style = if focused && band_idx == selected_band {
             Style::default().fg(Color::Cyan).add_modifier(Modifier::BOLD)
         } else {
             Style::default().fg(Color::Gray)
