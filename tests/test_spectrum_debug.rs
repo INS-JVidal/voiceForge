@@ -1,5 +1,5 @@
-/// Diagnostic test for spectrum visualization
-/// Tests audio loading, spectrum computation, and image generation
+//! Diagnostic test for spectrum visualization
+//! Tests audio loading, spectrum computation, and image generation
 
 use std::path::Path;
 use voiceforge::audio::decoder::decode_file;
@@ -114,7 +114,7 @@ fn test_spectrum_visualization_pipeline() {
         }
     }
 
-    let total_pixels = img_width as u32 * img_height as u32;
+    let total_pixels = img_width * img_height;
 
     println!("✅ Image generated: {}x{} pixels", img_width, img_height);
     println!("   - Total pixels: {}", total_pixels);
@@ -138,7 +138,7 @@ fn test_spectrum_visualization_pipeline() {
         println!("   - Audio spectrum max_db={:.1}dB (floor is -50dB)", max_db);
         println!("   - Audio might be silent or amplitude too low");
         println!("   - Try loading a louder file like complex_chord_3s.wav");
-    } else if colored_pixels < (total_pixels / 10) as u32 {
+    } else if colored_pixels < total_pixels / 10 {
         println!("⚠️  WARNING: Very sparse colored pixels ({:.1}% filled)",
             (colored_pixels as f32 / total_pixels as f32) * 100.0);
         println!("   Audio spectrum is quiet (max_db={:.1}dB)", max_db);

@@ -19,16 +19,6 @@ pub fn render(frame: &mut Frame, area: Rect, app: &mut AppState) {
     let inner = block.inner(area);
     frame.render_widget(block, area);
 
-    // DEBUG: Log render area dimensions (once)
-    static mut RENDER_LOG_FRAME: usize = 0;
-    unsafe {
-        RENDER_LOG_FRAME += 1;
-        if RENDER_LOG_FRAME == 1 {
-            eprintln!("[SPECTRUM_RENDER] render area: {}x{} (outer), {}x{} (inner after borders)",
-                area.width, area.height, inner.width, inner.height);
-        }
-    }
-
     // Try GPU pixel path if picker is available
     if let Some(ref mut state) = app.spectrum_state {
         let widget = ratatui_image::StatefulImage::new(None);
@@ -70,8 +60,8 @@ fn render_unicode_fallback(frame: &mut Frame, area: Rect, app: &AppState) {
         // L-7: Map log-frequency starting from bin 0 (DC) not bin 1.
         // Use (bin_count - 1) * powf(t) to include the full range [0, bin_count-1].
         let bin = ((bin_count as f32 - 1.0) * t.powf(2.0)).round() as usize;
-        let db = app.spectrum_bins[bin].clamp(-50.0, 0.0);
-        let h = ((db + 50.0) / 50.0 * inner_h as f32).clamp(0.0, inner_h as f32);
+        let db = app.spectrum_bins[bin].clamp(-80.0, 0.0);
+        let h = ((db + 80.0) / 80.0 * inner_h as f32).clamp(0.0, inner_h as f32);
         heights.push(h);
     }
 
@@ -132,10 +122,10 @@ pub fn spectrum_to_image(bins: &[f32], width: u32, height: u32) -> RgbaImage {
         // L-7: Use quadratic log-frequency mapping that includes bin 0.
         let bin = ((bin_count as f64 - 1.0) * t.powf(2.0)).round().min((bin_count - 1) as f64) as usize;
 
-        // Amplitude fraction [0.0, 1.0] from dB value in [-50, 0] for better visibility
-        // Use -50 instead of -80 to amplify quieter signals
-        let db = bins[bin].clamp(-50.0, 0.0);
-        let amp = (db + 50.0) / 50.0; // 0.0 = -50dB, 1.0 = 0dB (peak)
+        // Amplitude fraction [0.0, 1.0] from dB value in [-80, 0]
+        // Use full -80dB range to capture quieter signals and avoid all-black frames
+        let db = bins[bin].clamp(-80.0, 0.0);
+        let amp = (db + 80.0) / 80.0; // 0.0 = -80dB, 1.0 = 0dB (peak)
 
         let filled_px = (amp as f64 * height as f64).round() as u32;
 

@@ -54,12 +54,14 @@ pub fn compute_spectrum(samples: &[f32], fft_size: usize) -> Vec<f32> {
     fft.process(&mut buffer);
 
     let bin_count = fft_size / 2;
-    buffer[..bin_count]
+    let result: Vec<f32> = buffer[..bin_count]
         .iter()
         .map(|c| {
             (20.0 * (c.norm() / (fft_size as f32).sqrt()).max(1e-10).log10()).clamp(-80.0, 0.0)
         })
-        .collect()
+        .collect();
+
+    result
 }
 
 /// Extract `size` mono samples from `audio` at interleaved position `pos`.

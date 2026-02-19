@@ -131,37 +131,21 @@ fn main() -> io::Result<()> {
         // Update spectrum bins from current playback position
         if app.playback.playing.load(Ordering::Acquire) {
             if let Some(ref lock) = app.playback.audio_lock {
-                if let Ok(guard) = lock.try_read() {
-                    let pos = app.playback.position.load(Ordering::Acquire);
-                    let window = extract_window(&guard, pos, FFT_SIZE);
-                    app.spectrum_bins = compute_spectrum(&window, FFT_SIZE);
+                match lock.try_read() {
+                    Ok(guard) => {
+                        let pos = app.playback.position.load(Ordering::Acquire);
+                        let window = extract_window(&guard, pos, FFT_SIZE);
+
+                        app.spectrum_bins = compute_spectrum(&window, FFT_SIZE);
+                    }
+                    Err(_) => {
+                        // try_read failed — spectrum will not update until lock is available
+                    }
                 }
             }
         }
 
         // Render spectrum as pixel image if picker is available
-        // DEBUG: Log spectrum less frequently (not every frame!)
-        static mut SPECTRUM_FRAME_COUNT: usize = 0;
-        static mut LAST_SPECTRUM_LOG: usize = 0;
-        unsafe {
-            SPECTRUM_FRAME_COUNT += 1;
-            if SPECTRUM_FRAME_COUNT >= LAST_SPECTRUM_LOG + 60 {
-                // Log only every 60 frames (~2 seconds at 30fps) to avoid terminal spam
-                LAST_SPECTRUM_LOG = SPECTRUM_FRAME_COUNT;
-                let max_db = if app.spectrum_bins.is_empty() {
-                    f32::NEG_INFINITY
-                } else {
-                    app.spectrum_bins.iter().cloned().fold(f32::NEG_INFINITY, f32::max)
-                };
-                eprintln!("[SPECTRUM] frame={}, bins={}, max_db={:.1}, picker={}, audio_lock={}",
-                    SPECTRUM_FRAME_COUNT,
-                    app.spectrum_bins.len(),
-                    max_db,
-                    app.spectrum_picker.is_some(),
-                    app.playback.audio_lock.is_some());
-            }
-        }
-
         if let Some(ref mut picker) = app.spectrum_picker {
             if !app.spectrum_bins.is_empty() {
                 // Use reasonable pixel dimensions for good detail
@@ -175,25 +159,8 @@ fn main() -> io::Result<()> {
                 );
 
                 // DEBUG: Only warn once if image is black (not every frame!)
-                let mut pixel_count = 0u32;
-                for pixel in rgba_img.pixels() {
-                    if pixel.0[0] > 0 || pixel.0[1] > 0 || pixel.0[2] > 0 {
-                        pixel_count += 1;
-                    }
-                }
-                unsafe {
-                    if pixel_count == 0 && SPECTRUM_FRAME_COUNT == LAST_SPECTRUM_LOG {
-                        eprintln!("[SPECTRUM_IMAGE] WARNING: Image entirely black - spectrum_bins={}, max_db may be too low",
-                            app.spectrum_bins.len());
-                    }
-                }
-
                 let dynamic_img = image::DynamicImage::ImageRgba8(rgba_img);
-                match picker.new_resize_protocol(dynamic_img) {
-                    stateful => {
-                        app.spectrum_state = Some(stateful);
-                    }
-                }
+                app.spectrum_state = Some(picker.new_resize_protocol(dynamic_img));
             } else {
                 // Spectrum bins empty — will show Unicode fallback
                 app.spectrum_state = None;
