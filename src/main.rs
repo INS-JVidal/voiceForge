@@ -54,16 +54,32 @@ fn main() -> io::Result<()> {
 
     let mut app = AppState::new();
 
+    // DEBUG: Check environment
+    let term_program = std::env::var("TERM_PROGRAM").unwrap_or_default();
+    let term = std::env::var("TERM").unwrap_or_default();
+    let wsl_distro = std::env::var("WSL_DISTRO_NAME").ok();
+    eprintln!("[SPECTRUM_INIT] TERM_PROGRAM={term_program}, TERM={term}, WSL={wsl_distro:?}");
+
     // Initialize graphics protocol picker for spectrum visualization
-    match ratatui_image::picker::Picker::from_termios() {
+    // Note: Must happen after terminal is set up but picker detection is best-effort
+    let picker_result = ratatui_image::picker::Picker::from_termios();
+    eprintln!("[SPECTRUM_INIT] from_termios result: {}", if picker_result.is_ok() { "OK" } else { "FAILED" });
+
+    match picker_result {
         Ok(mut picker) => {
+            let font_size = picker.font_size;
+            eprintln!("[SPECTRUM_INIT] Got font size: {}x{}", font_size.0, font_size.1);
+
             picker.guess_protocol();
+            eprintln!("[SPECTRUM_INIT] Auto-selected protocol: {:?}", picker.protocol_type);
             app.spectrum_picker = Some(picker);
         }
-        Err(_) => {
-            // Fallback to default font size if terminal query fails
+        Err(e) => {
+            eprintln!("[SPECTRUM_INIT] Terminal query failed: {e}, using fallback");
+            // Fallback to default font size (common 8x16 in most terminals)
             let mut picker = ratatui_image::picker::Picker::new((8, 16));
             picker.guess_protocol();
+            eprintln!("[SPECTRUM_INIT] Fallback protocol: {:?}", picker.protocol_type);
             app.spectrum_picker = Some(picker);
         }
     }
@@ -124,21 +140,62 @@ fn main() -> io::Result<()> {
         }
 
         // Render spectrum as pixel image if picker is available
+        // DEBUG: Log spectrum update attempts
+        static mut SPECTRUM_FRAME_COUNT: usize = 0;
+        unsafe {
+            SPECTRUM_FRAME_COUNT += 1;
+            if SPECTRUM_FRAME_COUNT % 30 == 0 {
+                // Log every 30 frames (~1 second at 30fps)
+                let max_db = if app.spectrum_bins.is_empty() {
+                    f32::NEG_INFINITY
+                } else {
+                    app.spectrum_bins.iter().cloned().fold(f32::NEG_INFINITY, f32::max)
+                };
+                eprintln!("[SPECTRUM] frame={}, bins={}, max_db={:.1}, picker={}",
+                    SPECTRUM_FRAME_COUNT,
+                    app.spectrum_bins.len(),
+                    max_db,
+                    app.spectrum_picker.is_some());
+            }
+        }
+
         if let Some(ref mut picker) = app.spectrum_picker {
             if !app.spectrum_bins.is_empty() {
-                let terminal_size = terminal.size()?;
-                // Estimate spectrum area from layout
-                let spectrum_height = (terminal_size.height as usize / 4).max(3) as u32;
-                let spectrum_width = terminal_size.width as u32;
+                // Use reasonable pixel dimensions for good detail
+                let spectrum_height = 128u32;
+                let spectrum_width = 256u32;
 
                 let rgba_img = voiceforge::ui::spectrum::spectrum_to_image(
                     &app.spectrum_bins,
                     spectrum_width,
                     spectrum_height,
                 );
+
+                // DEBUG: Verify image was generated
+                let mut pixel_count = 0u32;
+                for pixel in rgba_img.pixels() {
+                    // Count non-black pixels
+                    if pixel.0[0] > 0 || pixel.0[1] > 0 || pixel.0[2] > 0 {
+                        pixel_count += 1;
+                    }
+                }
+                if pixel_count == 0 {
+                    eprintln!("[SPECTRUM] WARNING: Generated image is entirely black ({}x{} pixels)",
+                        spectrum_width, spectrum_height);
+                }
+
                 let dynamic_img = image::DynamicImage::ImageRgba8(rgba_img);
-                app.spectrum_state = Some(picker.new_resize_protocol(dynamic_img));
+                match picker.new_resize_protocol(dynamic_img) {
+                    stateful => {
+                        app.spectrum_state = Some(stateful);
+                    }
+                }
+            } else {
+                // Spectrum bins empty — will show Unicode fallback
+                app.spectrum_state = None;
             }
+        } else {
+            eprintln!("[SPECTRUM] ERROR: No picker available! GPU rendering unavailable.");
         }
 
         terminal.draw(|frame| {

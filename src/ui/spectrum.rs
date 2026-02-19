@@ -19,24 +19,52 @@ pub fn render(frame: &mut Frame, area: Rect, app: &mut AppState) {
     let inner = block.inner(area);
     frame.render_widget(block, area);
 
+    // DEBUG: Log render area dimensions
+    static mut RENDER_LOG_FRAME: usize = 0;
+    unsafe {
+        RENDER_LOG_FRAME += 1;
+        if RENDER_LOG_FRAME == 1 {
+            // Log once at startup
+            eprintln!("[SPECTRUM_RENDER] render area: {}x{} (outer), {}x{} (inner after borders)",
+                area.width, area.height, inner.width, inner.height);
+        }
+    }
+
     // Try GPU pixel path if picker is available
     if let Some(ref mut state) = app.spectrum_state {
+        eprintln!("[SPECTRUM_RENDER] Using GPU pixel path (StatefulImage)");
         let widget = ratatui_image::StatefulImage::new(None);
         frame.render_stateful_widget(widget, inner, state);
     } else {
         // Fallback to Unicode rendering
+        eprintln!("[SPECTRUM_RENDER] Using Unicode fallback (render_unicode_fallback)");
         render_unicode_fallback(frame, inner, app);
     }
 }
 
 /// Fallback Unicode/Braille renderer for terminals without graphics protocol support.
 fn render_unicode_fallback(frame: &mut Frame, area: Rect, app: &AppState) {
-    if app.spectrum_bins.is_empty() || area.width < 2 || area.height < 1 {
+    // DEBUG: Log why fallback is happening
+    if app.spectrum_bins.is_empty() {
+        eprintln!("[SPECTRUM_FALLBACK] spectrum_bins is empty");
         let placeholder = Paragraph::new("  No audio playing")
             .style(Style::default().fg(Color::DarkGray));
         frame.render_widget(placeholder, area);
         return;
     }
+    if area.width < 2 || area.height < 1 {
+        eprintln!("[SPECTRUM_FALLBACK] render area too small: {}x{}", area.width, area.height);
+        let placeholder = Paragraph::new("  No audio playing")
+            .style(Style::default().fg(Color::DarkGray));
+        frame.render_widget(placeholder, area);
+        return;
+    }
+
+    // DEBUG: Log spectrum data
+    let max_db = app.spectrum_bins.iter().cloned().fold(f32::NEG_INFINITY, f32::max);
+    let min_db = app.spectrum_bins.iter().cloned().fold(f32::INFINITY, f32::min);
+    eprintln!("[SPECTRUM_FALLBACK] rendering {}x{}, bins: count={}, min={:.1}dB, max={:.1}dB",
+        area.width, area.height, app.spectrum_bins.len(), min_db, max_db);
 
     let num_bars = area.width as usize;
     let inner_h = area.height as usize;
@@ -53,8 +81,8 @@ fn render_unicode_fallback(frame: &mut Frame, area: Rect, app: &AppState) {
         // L-7: Map log-frequency starting from bin 0 (DC) not bin 1.
         // Use (bin_count - 1) * powf(t) to include the full range [0, bin_count-1].
         let bin = ((bin_count as f32 - 1.0) * t.powf(2.0)).round() as usize;
-        let db = app.spectrum_bins[bin];
-        let h = ((db + 80.0) / 80.0 * inner_h as f32).clamp(0.0, inner_h as f32);
+        let db = app.spectrum_bins[bin].clamp(-50.0, 0.0);
+        let h = ((db + 50.0) / 50.0 * inner_h as f32).clamp(0.0, inner_h as f32);
         heights.push(h);
     }
 
@@ -99,13 +127,20 @@ fn render_unicode_fallback(frame: &mut Frame, area: Rect, app: &AppState) {
 /// Each pixel column represents one logarithmic frequency bin.
 /// Vertical height represents amplitude; colors interpolate from violet → purple → pink.
 pub fn spectrum_to_image(bins: &[f32], width: u32, height: u32) -> RgbaImage {
+    // DEBUG: Log invocation
+    eprintln!("[SPECTRUM_IMAGE] spectrum_to_image called: {}x{}, {} bins", width, height, bins.len());
+
     let mut img = RgbaImage::from_pixel(width, height, Rgba([0, 0, 0, 255]));
 
     let num_bars = width as usize;
     let bin_count = bins.len();
     if num_bars == 0 || bin_count == 0 || height == 0 {
+        eprintln!("[SPECTRUM_IMAGE] ERROR: invalid dimensions");
         return img;
     }
+
+    let mut colored_pixels = 0u32;
+    let mut total_pixels = 0u32;
 
     for col in 0..num_bars {
         // Log-frequency mapping: same as current render
@@ -113,20 +148,28 @@ pub fn spectrum_to_image(bins: &[f32], width: u32, height: u32) -> RgbaImage {
         // L-7: Use quadratic log-frequency mapping that includes bin 0.
         let bin = ((bin_count as f64 - 1.0) * t.powf(2.0)).round().min((bin_count - 1) as f64) as usize;
 
-        // Amplitude fraction [0.0, 1.0] from dB value in [-80, 0]
-        let db = bins[bin].clamp(-80.0, 0.0);
-        let amp = (db + 80.0) / 80.0; // 0.0 = silence, 1.0 = peak
+        // Amplitude fraction [0.0, 1.0] from dB value in [-50, 0] for better visibility
+        // Use -50 instead of -80 to amplify quieter signals
+        let db = bins[bin].clamp(-50.0, 0.0);
+        let amp = (db + 50.0) / 50.0; // 0.0 = -50dB, 1.0 = 0dB (peak)
 
         let filled_px = (amp as f64 * height as f64).round() as u32;
 
         for row in 0..filled_px {
+            total_pixels += 1;
             // frac: 0.0 at bottom, 1.0 at top of filled portion
             let frac = row as f64 / height as f64;
             let color = punk_color(frac);
             let y = height - 1 - row; // render bottom-up
             img.put_pixel(col as u32, y, color);
+
+            if color.0[0] > 0 || color.0[1] > 0 || color.0[2] > 0 {
+                colored_pixels += 1;
+            }
         }
     }
+
+    eprintln!("[SPECTRUM_IMAGE] generated: {} colored pixels out of {}", colored_pixels, total_pixels);
     img
 }
 
