@@ -58,6 +58,13 @@ pub fn render(frame: &mut Frame, area: Rect, app: &AppState) {
             spans.push(Span::styled(msg, Style::default().fg(Color::Red)));
         }
         Line::from(spans)
+    } else if let Some(ref status) = app.processing_status {
+        // Show processing error/status without file info (e.g., during failed decode).
+        // Use spinner and yellow to distinguish from permanent error messages.
+        Line::from(Span::styled(
+            format!(" {} {}", spinner_frame(), status),
+            Style::default().fg(Color::Yellow),
+        ))
     } else if let Some(ref msg) = app.status_message {
         Line::from(Span::styled(
             format!(" {msg}"),

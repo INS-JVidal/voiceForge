@@ -196,7 +196,8 @@ where
         // Report progress only when total_frames is known and percentage advances
         if let Some(total) = total_frames {
             if total > 0 {
-                let pct = ((frames_decoded * 100) / total).min(100) as u8;
+                // Use u128 to avoid overflow on extremely long audio files (18+ hours).
+                let pct = ((frames_decoded as u128 * 100) / total as u128).min(100) as u8;
                 if pct != last_pct {
                     on_progress(pct);
                     last_pct = pct;
