@@ -12,6 +12,9 @@ pub struct PlaybackState {
     pub playing: Arc<AtomicBool>,
     /// Current sample position in the interleaved buffer.
     pub position: Arc<AtomicUsize>,
+    /// Handle to the audio data in the running stream's callback.
+    /// Allows swapping audio without rebuilding the cpal stream.
+    pub audio_lock: Option<Arc<RwLock<Arc<AudioData>>>>,
 }
 
 impl Default for PlaybackState {
@@ -19,6 +22,7 @@ impl Default for PlaybackState {
         Self {
             playing: Arc::new(AtomicBool::new(false)),
             position: Arc::new(AtomicUsize::new(0)),
+            audio_lock: None,
         }
     }
 }
@@ -104,13 +108,14 @@ pub fn start_playback(
     let sample_format = supported_config.sample_format();
     let config: StreamConfig = supported_config.into();
 
-    let state = PlaybackState::new();
+    let mut state = PlaybackState::new();
+    let audio_lock = Arc::new(RwLock::new(audio));
 
     let ctx = CallbackContext {
         playing: Arc::clone(&state.playing),
         position: Arc::clone(&state.position),
         device_channels: config.channels,
-        audio: Arc::new(RwLock::new(audio)),
+        audio: Arc::clone(&audio_lock),
     };
 
     let stream = match sample_format {
@@ -129,6 +134,7 @@ pub fn start_playback(
         .map_err(|e| PlaybackError(format!("failed to start stream: {e}")))?;
 
     state.playing.store(true, Ordering::Release);
+    state.audio_lock = Some(audio_lock);
 
     Ok((stream, state))
 }
@@ -156,7 +162,7 @@ fn build_stream<T: cpal::SizedSample + cpal::FromSample<f32>>(
 /// `PlaybackState` atomics (position and playing state are preserved).
 pub fn rebuild_stream(
     audio: Arc<AudioData>,
-    state: &PlaybackState,
+    state: &mut PlaybackState,
 ) -> Result<Stream, PlaybackError> {
     let host = cpal::default_host();
     let device = host
@@ -170,11 +176,13 @@ pub fn rebuild_stream(
     let sample_format = supported_config.sample_format();
     let config: StreamConfig = supported_config.into();
 
+    let audio_lock = Arc::new(RwLock::new(audio));
+
     let ctx = CallbackContext {
         playing: Arc::clone(&state.playing),
         position: Arc::clone(&state.position),
         device_channels: config.channels,
-        audio: Arc::new(RwLock::new(audio)),
+        audio: Arc::clone(&audio_lock),
     };
 
     let stream = match sample_format {
@@ -192,7 +200,16 @@ pub fn rebuild_stream(
         .play()
         .map_err(|e| PlaybackError(format!("failed to start stream: {e}")))?;
 
+    state.audio_lock = Some(audio_lock);
+
     Ok(stream)
+}
+
+/// Swap the audio buffer in a running stream's RwLock.
+/// Glitch-free — the audio callback picks up the new data on its next read-lock acquisition.
+pub fn swap_audio(audio_lock: &Arc<RwLock<Arc<AudioData>>>, new_audio: Arc<AudioData>) {
+    let mut guard = audio_lock.write().expect("audio lock poisoned");
+    *guard = new_audio;
 }
 
 fn write_audio_data<T: cpal::SizedSample + cpal::FromSample<f32>>(

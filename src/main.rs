@@ -1,5 +1,6 @@
 use std::io::{self, stdout};
 use std::path::Path;
+use std::sync::atomic::Ordering;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
@@ -84,8 +85,9 @@ fn main() -> io::Result<()> {
         // Poll for processing results (non-blocking)
         while let Some(result) = processing.try_recv() {
             match result {
-                ProcessingResult::AnalysisDone => {
+                ProcessingResult::AnalysisDone(mono_original) => {
                     app.processing_status = None;
+                    app.original_audio = Some(Arc::new(mono_original));
                     // Auto-resynthesize with current slider values
                     let values = app.world_slider_values();
                     processing.send(ProcessingCommand::Resynthesize(values));
@@ -94,54 +96,63 @@ fn main() -> io::Result<()> {
                     app.processing_status = None;
                     let new_audio = Arc::new(audio_data);
 
-                    // Adjust playback position for channel count changes
-                    // (e.g. stereo original → mono after WORLD synthesis).
-                    if let Some(ref mut info) = app.file_info {
-                        let old_channels = info.channels as usize;
-                        let new_channels = new_audio.channels as usize;
+                    if app.ab_original {
+                        // User is listening to original — just store the new
+                        // processed audio without touching the stream.
+                        app.audio_data = Some(new_audio);
+                    } else {
+                        // User is on B (processed) — swap or rebuild.
 
-                        if old_channels != new_channels
-                            && old_channels > 0
-                            && new_channels > 0
-                        {
-                            let current_pos = app
-                                .playback
-                                .position
-                                .load(std::sync::atomic::Ordering::Relaxed);
-                            // Convert interleaved position → frame → new interleaved position
-                            let frame = current_pos / old_channels;
-                            let new_pos =
-                                (frame * new_channels).min(new_audio.samples.len());
+                        // Adjust playback position for channel count changes
+                        // (e.g. stereo original → mono after WORLD synthesis).
+                        if let Some(ref mut info) = app.file_info {
+                            let old_channels = info.channels as usize;
+                            let new_channels = new_audio.channels as usize;
+
+                            if old_channels != new_channels
+                                && old_channels > 0
+                                && new_channels > 0
+                            {
+                                let current_pos =
+                                    app.playback.position.load(Ordering::Acquire);
+                                let frame = current_pos / old_channels;
+                                let new_pos =
+                                    (frame * new_channels).min(new_audio.samples.len());
+                                app.playback.position.store(new_pos, Ordering::Release);
+                            }
+
+                            info.channels = new_audio.channels;
+                            info.total_samples = new_audio.samples.len();
+                            info.duration_secs = new_audio.duration_secs();
+                        }
+
+                        // Clamp position if it's beyond the new buffer
+                        let max_samples = new_audio.samples.len();
+                        let current_pos = app.playback.position.load(Ordering::Acquire);
+                        if current_pos > max_samples {
                             app.playback
                                 .position
-                                .store(new_pos, std::sync::atomic::Ordering::Relaxed);
+                                .store(max_samples, Ordering::Release);
                         }
 
-                        info.channels = new_audio.channels;
-                        info.total_samples = new_audio.samples.len();
-                        info.duration_secs = new_audio.duration_secs();
-                    }
-
-                    // Clamp position if it's beyond the new buffer
-                    let max_samples = new_audio.samples.len();
-                    let current_pos = app
-                        .playback
-                        .position
-                        .load(std::sync::atomic::Ordering::Relaxed);
-                    if current_pos > max_samples {
-                        app.playback
-                            .position
-                            .store(max_samples, std::sync::atomic::Ordering::Relaxed);
-                    }
-
-                    // Rebuild the cpal stream with new audio
-                    match audio::playback::rebuild_stream(Arc::clone(&new_audio), &app.playback) {
-                        Ok(stream) => {
-                            _stream = Some(stream);
+                        // Swap audio in running stream if we have a lock, else rebuild
+                        if let Some(ref lock) = app.playback.audio_lock {
+                            audio::playback::swap_audio(lock, Arc::clone(&new_audio));
                             app.audio_data = Some(new_audio);
-                        }
-                        Err(e) => {
-                            app.status_message = Some(format!("Playback error: {e}"));
+                        } else {
+                            match audio::playback::rebuild_stream(
+                                Arc::clone(&new_audio),
+                                &mut app.playback,
+                            ) {
+                                Ok(stream) => {
+                                    _stream = Some(stream);
+                                    app.audio_data = Some(new_audio);
+                                }
+                                Err(e) => {
+                                    app.status_message =
+                                        Some(format!("Playback error: {e}"));
+                                }
+                            }
                         }
                     }
                 }
@@ -172,6 +183,9 @@ fn main() -> io::Result<()> {
                             Ok(stream) => {
                                 _stream = Some(stream);
                                 app.status_message = None;
+                                // Reset A/B state for new file
+                                app.ab_original = false;
+                                app.original_audio = None;
                                 // Send audio for WORLD analysis
                                 if let Some(ref audio) = app.audio_data {
                                     processing
@@ -185,6 +199,52 @@ fn main() -> io::Result<()> {
                         Action::Resynthesize => {
                             // Debounce: reset timer on each slider change
                             resynth_pending = Some(Instant::now() + RESYNTH_DEBOUNCE);
+                        }
+                        Action::ToggleAB => {
+                            // ab_original was already flipped by the handler
+                            if let Some(ref lock) = app.playback.audio_lock {
+                                let target = if app.ab_original {
+                                    app.original_audio.as_ref()
+                                } else {
+                                    app.audio_data.as_ref()
+                                };
+                                if let Some(audio) = target {
+                                    // Scale position proportionally if buffer lengths differ
+                                    let old_len = {
+                                        let guard =
+                                            lock.read().expect("audio lock poisoned");
+                                        guard.samples.len()
+                                    };
+                                    let new_len = audio.samples.len();
+                                    if old_len != new_len {
+                                        let pos =
+                                            app.playback.position.load(Ordering::Acquire);
+                                        let fraction = if old_len > 0 {
+                                            pos as f64 / old_len as f64
+                                        } else {
+                                            0.0
+                                        };
+                                        let new_pos =
+                                            (fraction * new_len as f64).round() as usize;
+                                        app.playback.position.store(
+                                            new_pos.min(new_len),
+                                            Ordering::Release,
+                                        );
+                                    }
+
+                                    // Update file_info for the active buffer
+                                    if let Some(ref mut info) = app.file_info {
+                                        info.total_samples = audio.samples.len();
+                                        info.duration_secs = audio.duration_secs();
+                                        info.channels = audio.channels;
+                                    }
+
+                                    audio::playback::swap_audio(
+                                        lock,
+                                        Arc::clone(audio),
+                                    );
+                                }
+                            }
                         }
                     }
                 }

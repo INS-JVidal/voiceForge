@@ -149,6 +149,14 @@ fn handle_normal(key: KeyEvent, app: &mut AppState) -> Option<Action> {
             }
             None
         }
+        KeyCode::Char('a') => {
+            if app.audio_data.is_some() && app.original_audio.is_some() {
+                app.ab_original = !app.ab_original;
+                Some(Action::ToggleAB)
+            } else {
+                None
+            }
+        }
         KeyCode::Char('o') => {
             app.mode = AppMode::FilePicker;
             app.file_picker_input.clear();

@@ -17,7 +17,7 @@ pub enum ProcessingCommand {
 
 /// Results sent from the processing thread back to the main thread.
 pub enum ProcessingResult {
-    AnalysisDone,
+    AnalysisDone(AudioData),
     SynthesisDone(AudioData),
     Status(String),
 }
@@ -89,8 +89,9 @@ fn processing_loop(cmd_rx: Receiver<ProcessingCommand>, result_tx: Sender<Proces
                 let params = world::analyze(&audio);
                 cached_params = Some(params);
                 // Store a mono f32 version for the neutral shortcut (no WORLD artifacts).
-                original_mono = Some(world::to_mono(&audio));
-                let _ = result_tx.send(ProcessingResult::AnalysisDone);
+                let mono = world::to_mono(&audio);
+                original_mono = Some(mono.clone());
+                let _ = result_tx.send(ProcessingResult::AnalysisDone(mono));
             }
             ProcessingCommand::Resynthesize(values) => {
                 if cached_params.is_none() {
@@ -111,8 +112,9 @@ fn processing_loop(cmd_rx: Receiver<ProcessingCommand>, result_tx: Sender<Proces
                             sample_rate = audio.sample_rate;
                             let params = world::analyze(&audio);
                             cached_params = Some(params);
-                            original_mono = Some(world::to_mono(&audio));
-                            let _ = result_tx.send(ProcessingResult::AnalysisDone);
+                            let mono = world::to_mono(&audio);
+                            original_mono = Some(mono.clone());
+                            let _ = result_tx.send(ProcessingResult::AnalysisDone(mono));
                             // Skip the stale resynthesize; main will send a fresh one.
                             continue;
                         }

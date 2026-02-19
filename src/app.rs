@@ -35,6 +35,7 @@ pub enum Action {
     Quit,
     LoadFile(String),
     Resynthesize,
+    ToggleAB,
 }
 
 /// Info about the currently loaded file.
@@ -94,6 +95,7 @@ pub struct AppState {
     pub file_info: Option<FileInfo>,
     pub playback: PlaybackState,
     pub audio_data: Option<Arc<AudioData>>,
+    pub original_audio: Option<Arc<AudioData>>,
     pub processing_status: Option<String>,
     pub loop_enabled: bool,
     pub ab_original: bool,
@@ -113,6 +115,7 @@ impl AppState {
             file_info: None,
             playback: PlaybackState::new(),
             audio_data: None,
+            original_audio: None,
             processing_status: None,
             loop_enabled: false,
             ab_original: false,

@@ -28,7 +28,11 @@ pub fn render(frame: &mut Frame, area: Rect, app: &AppState) {
 
     let loop_str = if app.loop_enabled { "On" } else { "Off" };
 
-    let ab_str = if app.ab_original { "A" } else { "B" };
+    let ab_str = if app.ab_original {
+        "A: Original"
+    } else {
+        "B: Processed"
+    };
 
     // Time display
     let (current_time, duration) = if let Some(ref info) = app.file_info {
@@ -73,7 +77,16 @@ pub fn render(frame: &mut Frame, area: Rect, app: &AppState) {
         Span::styled("●", Style::default().fg(Color::White)),
         Span::styled("─".repeat(empty), Style::default().fg(Color::DarkGray)),
         Span::styled(time_str, Style::default().fg(Color::White)),
-        Span::styled(ab_display, Style::default().fg(Color::Magenta)),
+        Span::styled(
+            ab_display,
+            Style::default()
+                .fg(if app.ab_original {
+                    Color::Green
+                } else {
+                    Color::Magenta
+                })
+                .add_modifier(Modifier::BOLD),
+        ),
     ]);
 
     let paragraph = Paragraph::new(line);
