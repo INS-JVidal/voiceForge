@@ -10,6 +10,7 @@ pub enum AppMode {
     Normal,
     FilePicker,
     Saving,
+    Help,
 }
 
 /// Which panel has keyboard focus.
@@ -80,6 +81,16 @@ impl SliderDef {
         let precision = (1.0 / self.step).round();
         if precision > 0.0 && precision.is_finite() {
             self.value = (self.value * precision).round() / precision;
+        }
+    }
+
+    /// Reset the slider to its default value. Returns true if the value changed.
+    pub fn reset(&mut self) -> bool {
+        if self.value != self.default {
+            self.value = self.default;
+            true
+        } else {
+            false
         }
     }
 

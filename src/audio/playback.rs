@@ -18,6 +18,8 @@ pub struct PlaybackState {
     /// Live gain multiplier (f32 stored as bits). Applied in the audio callback
     /// for instant (~5ms) feedback without buffer swap.
     pub live_gain: Arc<AtomicU32>,
+    /// Whether playback should loop back to the start when it reaches the end.
+    pub loop_enabled: Arc<AtomicBool>,
 }
 
 impl Default for PlaybackState {
@@ -27,6 +29,7 @@ impl Default for PlaybackState {
             position: Arc::new(AtomicUsize::new(0)),
             audio_lock: None,
             live_gain: Arc::new(AtomicU32::new(1.0_f32.to_bits())),
+            loop_enabled: Arc::new(AtomicBool::new(false)),
         }
     }
 }
@@ -92,6 +95,7 @@ struct CallbackContext {
     position: Arc<AtomicUsize>,
     device_channels: u16,
     live_gain: Arc<AtomicU32>,
+    loop_enabled: Arc<AtomicBool>,
 }
 
 /// Start audio playback on the default output device.
@@ -122,6 +126,7 @@ pub fn start_playback(
         device_channels: config.channels,
         audio: Arc::clone(&audio_lock),
         live_gain: Arc::clone(&state.live_gain),
+        loop_enabled: Arc::clone(&state.loop_enabled),
     };
 
     let stream = match sample_format {
@@ -190,6 +195,7 @@ pub fn rebuild_stream(
         device_channels: config.channels,
         audio: Arc::clone(&audio_lock),
         live_gain: Arc::clone(&state.live_gain),
+        loop_enabled: Arc::clone(&state.loop_enabled),
     };
 
     let stream = match sample_format {
@@ -259,13 +265,18 @@ fn write_audio_data<T: cpal::SizedSample + cpal::FromSample<f32>>(
 
     let mut pos = ctx.position.load(Ordering::Acquire);
     let gain = f32::from_bits(ctx.live_gain.load(Ordering::Relaxed));
+    let looping = ctx.loop_enabled.load(Ordering::Relaxed);
 
     for frame in output.chunks_mut(dc) {
         if pos >= total_samples {
-            for sample in frame.iter_mut() {
-                *sample = silence;
+            if looping && total_samples > 0 {
+                pos = 0;
+            } else {
+                for sample in frame.iter_mut() {
+                    *sample = silence;
+                }
+                continue;
             }
-            continue;
         }
 
         for (dev_ch, sample) in frame.iter_mut().enumerate() {

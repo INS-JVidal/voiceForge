@@ -11,6 +11,11 @@ pub fn handle_key_event(key: KeyEvent, app: &mut AppState) -> Option<Action> {
     match app.mode {
         AppMode::FilePicker => handle_file_picker(key, app),
         AppMode::Saving => handle_save_dialog(key, app),
+        AppMode::Help => {
+            // Any key dismisses the help overlay.
+            app.mode = AppMode::Normal;
+            None
+        }
         AppMode::Normal => handle_normal(key, app),
     }
 }
@@ -173,6 +178,9 @@ fn handle_normal(key: KeyEvent, app: &mut AppState) -> Option<Action> {
         }
         KeyCode::Char('r') => {
             app.loop_enabled = !app.loop_enabled;
+            app.playback
+                .loop_enabled
+                .store(app.loop_enabled, Ordering::Relaxed);
             None
         }
         KeyCode::Char('[') => {
@@ -235,6 +243,29 @@ fn handle_normal(key: KeyEvent, app: &mut AppState) -> Option<Action> {
             app.mode = AppMode::FilePicker;
             app.file_picker_input.clear();
             None
+        }
+        KeyCode::Char('?') => {
+            app.mode = AppMode::Help;
+            None
+        }
+        KeyCode::Char('d') => {
+            // Reset the selected slider to its default value.
+            let focus = app.focus;
+            let idx = app.selected_slider;
+            let changed = if let Some(sliders) = app.focused_sliders_mut() {
+                if idx < sliders.len() {
+                    sliders[idx].reset()
+                } else {
+                    false
+                }
+            } else {
+                false
+            };
+            if changed {
+                effects_slider_action(focus, idx, app)
+            } else {
+                None
+            }
         }
         _ => None,
     }

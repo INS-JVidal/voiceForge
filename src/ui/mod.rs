@@ -1,4 +1,5 @@
 pub mod file_picker;
+pub mod help;
 pub mod layout;
 pub mod save_dialog;
 pub mod slider;

@@ -2,7 +2,7 @@ use ratatui::layout::{Constraint, Direction, Layout};
 use ratatui::Frame;
 
 use crate::app::{AppMode, AppState, PanelFocus};
-use crate::ui::{file_picker, save_dialog, slider, spectrum, status_bar, transport};
+use crate::ui::{file_picker, help, save_dialog, slider, spectrum, status_bar, transport};
 
 pub fn render(frame: &mut Frame, app: &AppState) {
     let area = frame.area();
@@ -84,5 +84,8 @@ pub fn render(frame: &mut Frame, app: &AppState) {
     }
     if app.mode == AppMode::Saving {
         save_dialog::render(frame, app);
+    }
+    if app.mode == AppMode::Help {
+        help::render(frame);
     }
 }

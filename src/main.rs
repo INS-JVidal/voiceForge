@@ -77,6 +77,11 @@ fn main() -> io::Result<()> {
 
     // Main event loop — ~30 fps
     loop {
+        // Sync loop toggle to audio callback atomic.
+        app.playback
+            .loop_enabled
+            .store(app.loop_enabled, Ordering::Relaxed);
+
         // Update spectrum bins from current playback position
         if app.playback.playing.load(Ordering::Acquire) {
             if let Some(ref lock) = app.playback.audio_lock {
@@ -361,6 +366,10 @@ fn load_file(path: &str, app: &mut AppState) -> Result<cpal::Stream, Box<dyn std
     app.playback
         .live_gain
         .store(10.0_f32.powf(gain_db / 20.0).to_bits(), std::sync::atomic::Ordering::Relaxed);
+    // Restore loop state (new PlaybackState defaults to false).
+    app.playback
+        .loop_enabled
+        .store(app.loop_enabled, std::sync::atomic::Ordering::Relaxed);
     app.file_info = Some(file_info);
     app.audio_data = Some(audio);
 
