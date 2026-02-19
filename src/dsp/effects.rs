@@ -26,9 +26,10 @@ impl Default for EffectsParams {
 
 impl EffectsParams {
     /// True when all effects are at their default (bypass) values.
+    /// True when all processing-thread effects are at their default (bypass) values.
+    /// Note: gain is excluded — it is applied live in the audio callback.
     pub fn is_neutral(&self) -> bool {
-        self.gain_db == 0.0
-            && self.low_cut_hz <= 20.0
+        self.low_cut_hz <= 20.0
             && self.high_cut_hz >= 20000.0
             && self.compressor_thresh_db >= 0.0
             && self.reverb_mix == 0.0
@@ -45,10 +46,7 @@ pub fn apply_effects(samples: &[f32], sample_rate: u32, params: &EffectsParams) 
 
     let mut buf = samples.to_vec();
 
-    // 1. Gain
-    if params.gain_db != 0.0 {
-        apply_gain(&mut buf, params.gain_db);
-    }
+    // 1. Gain — applied live in audio callback, skipped here.
 
     // 2. High-pass (low cut)
     if params.low_cut_hz > 20.0 {
@@ -80,7 +78,8 @@ pub fn apply_effects(samples: &[f32], sample_rate: u32, params: &EffectsParams) 
 
 // ── Gain ────────────────────────────────────────────────────────────────
 
-fn apply_gain(samples: &mut [f32], gain_db: f32) {
+/// Apply gain in dB to a sample buffer. Public for use in WAV export and tests.
+pub fn apply_gain(samples: &mut [f32], gain_db: f32) {
     let linear = 10.0_f32.powf(gain_db / 20.0);
     for s in samples.iter_mut() {
         *s *= linear;

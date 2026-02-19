@@ -37,6 +37,8 @@ pub enum Action {
     LoadFile(String),
     Resynthesize,
     ReapplyEffects,
+    /// Live gain update — carries pre-computed linear multiplier.
+    LiveGain(f32),
     ToggleAB,
 }
 

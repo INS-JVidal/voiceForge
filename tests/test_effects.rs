@@ -1,4 +1,4 @@
-use voiceforge::dsp::effects::{apply_effects, EffectsParams};
+use voiceforge::dsp::effects::{apply_effects, apply_gain, EffectsParams};
 
 fn sine_wave(freq: f32, sample_rate: u32, num_samples: usize) -> Vec<f32> {
     (0..num_samples)
@@ -21,13 +21,11 @@ fn test_effects_neutral_passthrough() {
 
 #[test]
 fn test_effects_gain_plus_6db() {
-    let input = sine_wave(440.0, 44100, 4096);
-    let params = EffectsParams {
-        gain_db: 6.0,
-        ..Default::default()
-    };
-    let output = apply_effects(&input, 44100, &params);
-    let ratio = rms(&output) / rms(&input);
+    // Gain is now applied live in the audio callback via apply_gain, not via apply_effects.
+    let mut buf = sine_wave(440.0, 44100, 4096);
+    let input_rms = rms(&buf);
+    apply_gain(&mut buf, 6.0);
+    let ratio = rms(&buf) / input_rms;
     // +6 dB ≈ 2x amplitude
     assert!(
         (ratio - 2.0).abs() < 0.1,
@@ -37,13 +35,10 @@ fn test_effects_gain_plus_6db() {
 
 #[test]
 fn test_effects_gain_minus_12db() {
-    let input = sine_wave(440.0, 44100, 4096);
-    let params = EffectsParams {
-        gain_db: -12.0,
-        ..Default::default()
-    };
-    let output = apply_effects(&input, 44100, &params);
-    let ratio = rms(&output) / rms(&input);
+    let mut buf = sine_wave(440.0, 44100, 4096);
+    let input_rms = rms(&buf);
+    apply_gain(&mut buf, -12.0);
+    let ratio = rms(&buf) / input_rms;
     // -12 dB ≈ 0.25x amplitude
     assert!(
         (ratio - 0.25).abs() < 0.03,
@@ -174,7 +169,8 @@ fn test_effects_empty_input() {
 #[test]
 fn test_effects_is_neutral() {
     assert!(EffectsParams::default().is_neutral());
-    assert!(!EffectsParams {
+    // Gain is applied live in audio callback — it does NOT affect is_neutral.
+    assert!(EffectsParams {
         gain_db: 1.0,
         ..Default::default()
     }

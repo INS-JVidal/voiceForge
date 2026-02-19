@@ -229,6 +229,11 @@ fn main() -> io::Result<()> {
                         Action::ReapplyEffects => {
                             effects_pending = Some(Instant::now() + EFFECTS_DEBOUNCE);
                         }
+                        Action::LiveGain(linear) => {
+                            app.playback
+                                .live_gain
+                                .store(linear.to_bits(), std::sync::atomic::Ordering::Relaxed);
+                        }
                         Action::ToggleAB => {
                             // ab_original was already flipped by the handler
                             if let Some(ref lock) = app.playback.audio_lock {
@@ -315,6 +320,11 @@ fn load_file(path: &str, app: &mut AppState) -> Result<cpal::Stream, Box<dyn std
     let (stream, state) = audio::playback::start_playback(Arc::clone(&audio))?;
 
     app.playback = state;
+    // Restore live gain from current slider value (new PlaybackState defaults to 1.0).
+    let gain_db = app.effects_sliders[0].value as f32;
+    app.playback
+        .live_gain
+        .store(10.0_f32.powf(gain_db / 20.0).to_bits(), std::sync::atomic::Ordering::Relaxed);
     app.file_info = Some(file_info);
     app.audio_data = Some(audio);
 

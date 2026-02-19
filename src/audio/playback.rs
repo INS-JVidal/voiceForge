@@ -1,6 +1,6 @@
 use cpal::traits::{DeviceTrait, HostTrait, StreamTrait};
 use cpal::{SampleFormat, Stream, StreamConfig};
-use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU32, AtomicUsize, Ordering};
 use std::sync::{Arc, RwLock};
 
 use super::decoder::AudioData;
@@ -15,6 +15,9 @@ pub struct PlaybackState {
     /// Handle to the audio data in the running stream's callback.
     /// Allows swapping audio without rebuilding the cpal stream.
     pub audio_lock: Option<Arc<RwLock<Arc<AudioData>>>>,
+    /// Live gain multiplier (f32 stored as bits). Applied in the audio callback
+    /// for instant (~5ms) feedback without buffer swap.
+    pub live_gain: Arc<AtomicU32>,
 }
 
 impl Default for PlaybackState {
@@ -23,6 +26,7 @@ impl Default for PlaybackState {
             playing: Arc::new(AtomicBool::new(false)),
             position: Arc::new(AtomicUsize::new(0)),
             audio_lock: None,
+            live_gain: Arc::new(AtomicU32::new(1.0_f32.to_bits())),
         }
     }
 }
@@ -87,6 +91,7 @@ struct CallbackContext {
     playing: Arc<AtomicBool>,
     position: Arc<AtomicUsize>,
     device_channels: u16,
+    live_gain: Arc<AtomicU32>,
 }
 
 /// Start audio playback on the default output device.
@@ -116,6 +121,7 @@ pub fn start_playback(
         position: Arc::clone(&state.position),
         device_channels: config.channels,
         audio: Arc::clone(&audio_lock),
+        live_gain: Arc::clone(&state.live_gain),
     };
 
     let stream = match sample_format {
@@ -183,6 +189,7 @@ pub fn rebuild_stream(
         position: Arc::clone(&state.position),
         device_channels: config.channels,
         audio: Arc::clone(&audio_lock),
+        live_gain: Arc::clone(&state.live_gain),
     };
 
     let stream = match sample_format {
@@ -251,6 +258,7 @@ fn write_audio_data<T: cpal::SizedSample + cpal::FromSample<f32>>(
     }
 
     let mut pos = ctx.position.load(Ordering::Acquire);
+    let gain = f32::from_bits(ctx.live_gain.load(Ordering::Relaxed));
 
     for frame in output.chunks_mut(dc) {
         if pos >= total_samples {
@@ -268,7 +276,7 @@ fn write_audio_data<T: cpal::SizedSample + cpal::FromSample<f32>>(
             } else {
                 0.0f32
             };
-            *sample = T::from_sample(val);
+            *sample = T::from_sample(val * gain);
         }
         pos += ac;
     }
