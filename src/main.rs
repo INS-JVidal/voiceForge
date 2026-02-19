@@ -54,32 +54,17 @@ fn main() -> io::Result<()> {
 
     let mut app = AppState::new();
 
-    // DEBUG: Check environment
-    let term_program = std::env::var("TERM_PROGRAM").unwrap_or_default();
-    let term = std::env::var("TERM").unwrap_or_default();
-    let wsl_distro = std::env::var("WSL_DISTRO_NAME").ok();
-    eprintln!("[SPECTRUM_INIT] TERM_PROGRAM={term_program}, TERM={term}, WSL={wsl_distro:?}");
-
-    // Initialize graphics protocol picker for spectrum visualization
-    // Note: Must happen after terminal is set up but picker detection is best-effort
-    let picker_result = ratatui_image::picker::Picker::from_termios();
-    eprintln!("[SPECTRUM_INIT] from_termios result: {}", if picker_result.is_ok() { "OK" } else { "FAILED" });
-
-    match picker_result {
+    // Initialize graphics protocol picker for spectrum visualization.
+    // Must happen after terminal is set up; detection is best-effort.
+    match ratatui_image::picker::Picker::from_termios() {
         Ok(mut picker) => {
-            let font_size = picker.font_size;
-            eprintln!("[SPECTRUM_INIT] Got font size: {}x{}", font_size.0, font_size.1);
-
             picker.guess_protocol();
-            eprintln!("[SPECTRUM_INIT] Auto-selected protocol: {:?}", picker.protocol_type);
             app.spectrum_picker = Some(picker);
         }
-        Err(e) => {
-            eprintln!("[SPECTRUM_INIT] Terminal query failed: {e}, using fallback");
+        Err(_) => {
             // Fallback to default font size (common 8x16 in most terminals)
             let mut picker = ratatui_image::picker::Picker::new((8, 16));
             picker.guess_protocol();
-            eprintln!("[SPECTRUM_INIT] Fallback protocol: {:?}", picker.protocol_type);
             app.spectrum_picker = Some(picker);
         }
     }
@@ -158,7 +143,6 @@ fn main() -> io::Result<()> {
                     spectrum_height,
                 );
 
-                // DEBUG: Only warn once if image is black (not every frame!)
                 let dynamic_img = image::DynamicImage::ImageRgba8(rgba_img);
                 app.spectrum_state = Some(picker.new_resize_protocol(dynamic_img));
             } else {
