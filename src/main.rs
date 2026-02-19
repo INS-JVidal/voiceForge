@@ -94,6 +94,7 @@ fn main() -> io::Result<()> {
                 }
                 ProcessingResult::SynthesisDone(audio_data) => {
                     app.processing_status = None;
+                    app.status_message = None;
                     let new_audio = Arc::new(audio_data);
 
                     if app.ab_original {

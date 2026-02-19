@@ -33,6 +33,10 @@ pub fn render(frame: &mut Frame, area: Rect, app: &AppState) {
             spans.push(Span::styled(" │ ", Style::default().fg(Color::DarkGray)));
             spans.push(Span::styled(status, Style::default().fg(Color::Yellow)));
         }
+        if let Some(ref msg) = app.status_message {
+            spans.push(Span::styled(" │ ", Style::default().fg(Color::DarkGray)));
+            spans.push(Span::styled(msg, Style::default().fg(Color::Red)));
+        }
         Line::from(spans)
     } else if let Some(ref msg) = app.status_message {
         Line::from(Span::styled(

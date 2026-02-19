@@ -1,4 +1,5 @@
 use std::path::Path;
+use std::sync::atomic::Ordering;
 
 use ratatui::crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
 
@@ -86,41 +87,65 @@ fn handle_normal(key: KeyEvent, app: &mut AppState) -> Option<Action> {
             None
         }
         KeyCode::Left => {
-            let steps = if key.modifiers.contains(KeyModifiers::SHIFT) {
-                -0.2
-            } else {
-                -1.0
-            };
-            let focus = app.focus;
-            let idx = app.selected_slider;
-            if let Some(sliders) = app.focused_sliders_mut() {
-                if idx < sliders.len() {
-                    sliders[idx].adjust(steps);
+            if app.focus == PanelFocus::Transport {
+                if let Some(ref info) = app.file_info {
+                    app.playback.seek_by_secs(
+                        -5.0,
+                        info.sample_rate,
+                        info.channels,
+                        info.total_samples,
+                    );
                 }
-            }
-            if focus == PanelFocus::WorldSliders {
-                Some(Action::Resynthesize)
-            } else {
                 None
+            } else {
+                let steps = if key.modifiers.contains(KeyModifiers::SHIFT) {
+                    -0.2
+                } else {
+                    -1.0
+                };
+                let focus = app.focus;
+                let idx = app.selected_slider;
+                if let Some(sliders) = app.focused_sliders_mut() {
+                    if idx < sliders.len() {
+                        sliders[idx].adjust(steps);
+                    }
+                }
+                if focus == PanelFocus::WorldSliders {
+                    Some(Action::Resynthesize)
+                } else {
+                    None
+                }
             }
         }
         KeyCode::Right => {
-            let steps = if key.modifiers.contains(KeyModifiers::SHIFT) {
-                0.2
-            } else {
-                1.0
-            };
-            let focus = app.focus;
-            let idx = app.selected_slider;
-            if let Some(sliders) = app.focused_sliders_mut() {
-                if idx < sliders.len() {
-                    sliders[idx].adjust(steps);
+            if app.focus == PanelFocus::Transport {
+                if let Some(ref info) = app.file_info {
+                    app.playback.seek_by_secs(
+                        5.0,
+                        info.sample_rate,
+                        info.channels,
+                        info.total_samples,
+                    );
                 }
-            }
-            if focus == PanelFocus::WorldSliders {
-                Some(Action::Resynthesize)
-            } else {
                 None
+            } else {
+                let steps = if key.modifiers.contains(KeyModifiers::SHIFT) {
+                    0.2
+                } else {
+                    1.0
+                };
+                let focus = app.focus;
+                let idx = app.selected_slider;
+                if let Some(sliders) = app.focused_sliders_mut() {
+                    if idx < sliders.len() {
+                        sliders[idx].adjust(steps);
+                    }
+                }
+                if focus == PanelFocus::WorldSliders {
+                    Some(Action::Resynthesize)
+                } else {
+                    None
+                }
             }
         }
         KeyCode::Char('r') => {
@@ -146,6 +171,18 @@ fn handle_normal(key: KeyEvent, app: &mut AppState) -> Option<Action> {
                     info.channels,
                     info.total_samples,
                 );
+            }
+            None
+        }
+        KeyCode::Home => {
+            app.playback.position.store(0, Ordering::Release);
+            None
+        }
+        KeyCode::End => {
+            if let Some(ref info) = app.file_info {
+                app.playback
+                    .position
+                    .store(info.total_samples, Ordering::Release);
             }
             None
         }
