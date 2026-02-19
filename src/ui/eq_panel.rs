@@ -67,10 +67,12 @@ pub fn render(
 
         let gain = eq_gains[band_idx];
 
-        // Determine row for the gain value (scale: -6 to +6 dB per 'total_rows' pixels)
-        // 0 dB is at center_row, +6 dB is at row 0, -6 dB is at row total_rows-1
+        // Determine bar height and direction (scale: -6 to +6 dB per 'total_rows' pixels)
+        // 0 dB is at center_row, positive gain extends upward, negative gain extends downward
         let db_per_row = 12.0 / total_rows as f64;
-        let gain_row = (center_row as f64 - gain / db_per_row).round() as i32;
+        let bar_height = (gain.abs() / db_per_row).round() as usize;
+        let is_boost = gain > 1e-6;
+        let is_cut = gain < -1e-6;
 
         // Render the column
         for row in 0..total_rows {
@@ -96,8 +98,8 @@ pub fn render(
                     width: col_width,
                     height: 1,
                 });
-            } else if gain_row >= 0 && row_idx <= gain_row as usize && gain > 1e-6 {
-                // Boost region (above center)
+            } else if is_boost && row_idx < center_row && center_row - row_idx <= bar_height {
+                // Boost region (above center): bars extend upward from center line
                 let style = if band_idx == selected_band {
                     Style::default()
                         .fg(Color::Black)
@@ -114,27 +116,24 @@ pub fn render(
                     width: col_width,
                     height: 1,
                 });
-            } else if gain_row >= 0 && row_idx > gain_row as usize && gain < -1e-6 {
-                // Cut region (below center): gain is negative, so boost_row doesn't apply
-                let boost_row = (center_row as f64 + (-gain) / db_per_row).round() as i32;
-                if boost_row >= 0 && row_idx <= boost_row as usize {
-                    let style = if band_idx == selected_band {
-                        Style::default()
-                            .fg(Color::Black)
-                            .bg(Color::Red)
-                            .add_modifier(Modifier::BOLD)
-                    } else {
-                        Style::default().fg(Color::Red).bg(Color::Black)
-                    };
-                    let span = Span::styled("█", style);
-                    let para = Paragraph::new(span);
-                    frame.render_widget(para, Rect {
-                        x: col_x,
-                        y,
-                        width: col_width,
-                        height: 1,
-                    });
-                }
+            } else if is_cut && row_idx > center_row && row_idx - center_row <= bar_height {
+                // Cut region (below center): bars extend downward from center line
+                let style = if band_idx == selected_band {
+                    Style::default()
+                        .fg(Color::Black)
+                        .bg(Color::Red)
+                        .add_modifier(Modifier::BOLD)
+                } else {
+                    Style::default().fg(Color::Red).bg(Color::Black)
+                };
+                let span = Span::styled("█", style);
+                let para = Paragraph::new(span);
+                frame.render_widget(para, Rect {
+                    x: col_x,
+                    y,
+                    width: col_width,
+                    height: 1,
+                });
             }
         }
 
