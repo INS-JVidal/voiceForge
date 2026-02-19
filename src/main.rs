@@ -15,6 +15,7 @@ use ratatui::Terminal;
 use voiceforge::app::{Action, AppState, FileInfo};
 use voiceforge::audio;
 use voiceforge::dsp::processing::{ProcessingCommand, ProcessingHandle, ProcessingResult};
+use voiceforge::dsp::spectrum::{compute_spectrum, extract_window, FFT_SIZE};
 use voiceforge::input::handler::handle_key_event;
 use voiceforge::ui::layout;
 
@@ -74,6 +75,17 @@ fn main() -> io::Result<()> {
 
     // Main event loop — ~30 fps
     loop {
+        // Update spectrum bins from current playback position
+        if app.playback.playing.load(Ordering::Acquire) {
+            if let Some(ref lock) = app.playback.audio_lock {
+                if let Ok(guard) = lock.try_read() {
+                    let pos = app.playback.position.load(Ordering::Acquire);
+                    let window = extract_window(&guard, pos, FFT_SIZE);
+                    app.spectrum_bins = compute_spectrum(&window, FFT_SIZE);
+                }
+            }
+        }
+
         terminal.draw(|frame| {
             layout::render(frame, &app);
         })?;
@@ -184,6 +196,7 @@ fn main() -> io::Result<()> {
                             Ok(stream) => {
                                 _stream = Some(stream);
                                 app.status_message = None;
+                                app.spectrum_bins.clear();
                                 // Reset A/B state for new file
                                 app.ab_original = false;
                                 app.original_audio = None;

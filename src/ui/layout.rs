@@ -70,7 +70,7 @@ pub fn render(frame: &mut Frame, app: &AppState) {
     );
 
     // Spectrum placeholder
-    spectrum::render(frame, spectrum_area);
+    spectrum::render(frame, spectrum_area, app);
 
     // Transport bar
     transport::render(frame, transport_area, app);

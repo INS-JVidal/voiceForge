@@ -102,6 +102,7 @@ pub struct AppState {
     pub should_quit: bool,
     pub file_picker_input: String,
     pub status_message: Option<String>,
+    pub spectrum_bins: Vec<f32>,
 }
 
 impl AppState {
@@ -122,6 +123,7 @@ impl AppState {
             should_quit: false,
             file_picker_input: String::new(),
             status_message: None,
+            spectrum_bins: Vec::new(),
         }
     }
 

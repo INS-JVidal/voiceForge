@@ -13,6 +13,7 @@ cpal = "0.17"
 crossbeam-channel = "0.5"
 symphonia = { version = "0.5", features = ["mp3", "wav", "pcm", "flac"] }
 ratatui = "0.30"
+rustfft = "6.4"
 
 [dev-dependencies]
 hound = "3.5"
