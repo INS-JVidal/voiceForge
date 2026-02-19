@@ -35,12 +35,13 @@ pub fn render(frame: &mut Frame, app: &mut AppState) {
     let transport_area = vertical[1];
     let status_area = vertical[2];
 
-    // Top area: split vertically into slider panels (top 60%) and spectrum (rest)
+    // Top area: split vertically into slider panels (top 70%) and spectrum (rest)
+    // Spectrum gets Min(4) for better visibility, sliders get priority with Percentage
     let top_split = Layout::default()
         .direction(Direction::Vertical)
         .constraints([
-            Constraint::Percentage(70), // slider panels
-            Constraint::Min(3),         // spectrum
+            Constraint::Percentage(70), // slider panels (priority)
+            Constraint::Min(4),         // spectrum (1 extra line if space allows)
         ])
         .split(top);
 
