@@ -70,7 +70,7 @@ WORLD analysis is **offline** (~2-5s per minute of audio). Results are cached in
 - `src/dsp/modifier.rs` — `WorldSliderValues` struct, `apply()` with 6 transforms (pitch shift, pitch range, speed, breathiness, formant shift, spectral tilt)
 - `src/dsp/processing.rs` — `ProcessingHandle` (spawn/send/try_recv/shutdown), background thread with command drain and neutral-slider shortcut
 - `src/ui/` — ratatui layout, slider widget, spectrum placeholder, transport bar, status bar, file picker
-- `src/input/handler.rs` — keyboard event handler, returns `Option<Action>`
+- `src/input/handler.rs` — keyboard event handler, returns `Option<Action>`. Key bindings: `q`/`Esc` quit, `Space` play/pause, `Tab` cycle focus, `Up`/`Down` select slider, `Left`/`Right` adjust slider or seek (Transport), `[`/`]` seek ±5s, `Home`/`End` jump to start/end, `a` A/B toggle, `r` loop toggle, `o` open file
 - `crates/world-sys/` — FFI bindings; `analyze()` panics on invalid input, `synthesize()` returns `Result<Vec<f64>, WorldError>`
 
 ## Important Design Decisions
@@ -85,7 +85,7 @@ WORLD analysis is **offline** (~2-5s per minute of audio). Results are cached in
 
 ## Implementation Phases
 
-The project follows phases P0–P8 defined in `plans/initial_plan.md`. Reports in `implementations/`.
+The project follows phases P0–P8 defined in `plans/initial_plan.md`. Reports in `implementations/`. Audits in `audits/`.
 
 - **P0** — WORLD FFI scaffolding and roundtrip test ✓
 - **P1** — Audio decoder (symphonia) and cpal playback ✓
@@ -94,6 +94,7 @@ The project follows phases P0–P8 defined in `plans/initial_plan.md`. Reports i
 - **P3** — WORLD integration and slider-driven resynthesis (6 transforms, processing thread, debounce) ✓
 - **P3b** — Audit integration corrections (API compat fixes after P0–P2 security audit merge) ✓
 - **P4** — A/B comparison toggle (`'a'` key, RwLock swap, proportional position scaling) ✓
+- **P4b** — Enhanced seek navigation (Home/End, Transport arrows) + status_message visibility fix ✓
 - P5–P8 — Remaining (spectrum FFT, effects chain, WAV export, polish)
 
 ### Test Count
