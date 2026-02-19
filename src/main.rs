@@ -203,7 +203,11 @@ fn main() -> io::Result<()> {
                         // Continue draining results
                     } else {
                         let audio = Arc::new(audio_data);
-                        app.processing_status = None; // Clear loading status
+                        // M-2: Don't clear processing_status here; analysis is still pending.
+                        // Status messages from the processing thread will update it with
+                        // "Analyzing... 25/50/75/100%" as analysis progresses.
+                        // Only clear status when analysis completes (AnalysisDone) or synthesis
+                        // finishes (SynthesisDone).
 
                         // Set file info and audio data unconditionally (even if playback fails later).
                         // File is now considered "loaded" from the UI perspective.
