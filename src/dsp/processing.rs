@@ -212,8 +212,13 @@ fn handle_command(
 ) -> bool {
     match cmd {
         ProcessingCommand::Load(path) => {
-            let _ = result_tx.send(ProcessingResult::Status("Loading file...".into()));
-            match decoder::decode_file(Path::new(&path)) {
+            let _ = result_tx.send(ProcessingResult::Status("Decoding...".into()));
+            let result_tx_dec = result_tx.clone();
+            match decoder::decode_file_with_progress(Path::new(&path), move |pct| {
+                let _ = result_tx_dec.send(ProcessingResult::Status(
+                    format!("Decoding... {pct}%"),
+                ));
+            }) {
                 Ok(audio_data) => {
                     let audio = Arc::new(audio_data.clone());
                     let _ = result_tx.send(ProcessingResult::AudioReady(audio_data, path.clone()));
@@ -257,8 +262,13 @@ fn handle_command(
                     }
                     Ok(ProcessingCommand::Shutdown) => return true,
                     Ok(ProcessingCommand::Load(path)) => {
-                        let _ = result_tx.send(ProcessingResult::Status("Loading file...".into()));
-                        match decoder::decode_file(Path::new(&path)) {
+                        let _ = result_tx.send(ProcessingResult::Status("Decoding...".into()));
+                        let result_tx_dec = result_tx.clone();
+                        match decoder::decode_file_with_progress(Path::new(&path), move |pct| {
+                            let _ = result_tx_dec.send(ProcessingResult::Status(
+                                format!("Decoding... {pct}%"),
+                            ));
+                        }) {
                             Ok(audio_data) => {
                                 let audio = Arc::new(audio_data.clone());
                                 let _ = result_tx.send(ProcessingResult::AudioReady(audio_data, path.clone()));
@@ -314,8 +324,13 @@ fn handle_command(
                         latest_fx = newer;
                     }
                     Ok(ProcessingCommand::Load(path)) => {
-                        let _ = result_tx.send(ProcessingResult::Status("Loading file...".into()));
-                        match decoder::decode_file(Path::new(&path)) {
+                        let _ = result_tx.send(ProcessingResult::Status("Decoding...".into()));
+                        let result_tx_dec = result_tx.clone();
+                        match decoder::decode_file_with_progress(Path::new(&path), move |pct| {
+                            let _ = result_tx_dec.send(ProcessingResult::Status(
+                                format!("Decoding... {pct}%"),
+                            ));
+                        }) {
                             Ok(audio_data) => {
                                 let audio = Arc::new(audio_data.clone());
                                 let _ = result_tx.send(ProcessingResult::AudioReady(audio_data, path.clone()));
@@ -353,8 +368,13 @@ fn handle_command(
                                 Ok(ProcessingCommand::Shutdown) => return true,
                                 Ok(ProcessingCommand::Load(path)) => {
                                     let _ = result_tx
-                                        .send(ProcessingResult::Status("Loading file...".into()));
-                                    match decoder::decode_file(Path::new(&path)) {
+                                        .send(ProcessingResult::Status("Decoding...".into()));
+                                    let result_tx_dec = result_tx.clone();
+                                    match decoder::decode_file_with_progress(Path::new(&path), move |pct| {
+                                        let _ = result_tx_dec.send(ProcessingResult::Status(
+                                            format!("Decoding... {pct}%"),
+                                        ));
+                                    }) {
                                         Ok(audio_data) => {
                                             let audio = Arc::new(audio_data.clone());
                                             let _ = result_tx.send(ProcessingResult::AudioReady(

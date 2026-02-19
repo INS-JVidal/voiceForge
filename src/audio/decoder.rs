@@ -78,10 +78,18 @@ impl From<std::io::Error> for DecoderError {
     }
 }
 
-/// Decode an audio file into interleaved f32 PCM.
+/// Decode an audio file into interleaved f32 PCM, with optional progress reporting.
 ///
 /// Supports WAV, MP3, and FLAC (depending on symphonia features).
-pub fn decode_file(path: &Path) -> Result<AudioData, DecoderError> {
+/// The `on_progress` closure is called with percentage (0–100) only when `n_frames` is known
+/// (e.g., WAV/FLAC files). For formats without frame count metadata, no progress is reported.
+pub fn decode_file_with_progress<F>(
+    path: &Path,
+    mut on_progress: F,
+) -> Result<AudioData, DecoderError>
+where
+    F: FnMut(u8),
+{
     let file = File::open(path)?;
     let mss = MediaSourceStream::new(Box::new(file), Default::default());
 
@@ -129,12 +137,16 @@ pub fn decode_file(path: &Path) -> Result<AudioData, DecoderError> {
         return Err(DecoderError::UnsupportedFormat("zero channels".into()));
     }
 
+    let total_frames = track.codec_params.n_frames;
+
     let mut decoder = symphonia::default::get_codecs()
         .make(&track.codec_params, &DecoderOptions::default())
         .map_err(|e| DecoderError::UnsupportedCodec(e.to_string()))?;
 
     let mut samples = Vec::new();
     let mut sample_buf: Option<SampleBuffer<f32>> = None;
+    let mut frames_decoded: u64 = 0;
+    let mut last_pct: u8 = 0;
 
     loop {
         let packet = match format.next_packet() {
@@ -178,6 +190,19 @@ pub fn decode_file(path: &Path) -> Result<AudioData, DecoderError> {
         };
         buf.copy_interleaved_ref(audio_buf);
         samples.extend_from_slice(buf.samples());
+
+        frames_decoded += frames;
+
+        // Report progress only when total_frames is known and percentage advances
+        if let Some(total) = total_frames {
+            if total > 0 {
+                let pct = ((frames_decoded * 100) / total).min(100) as u8;
+                if pct != last_pct {
+                    on_progress(pct);
+                    last_pct = pct;
+                }
+            }
+        }
     }
 
     if samples.is_empty() {
@@ -197,4 +222,12 @@ pub fn decode_file(path: &Path) -> Result<AudioData, DecoderError> {
         audio.duration_secs()
     );
     Ok(audio)
+}
+
+/// Decode an audio file into interleaved f32 PCM.
+///
+/// Supports WAV, MP3, and FLAC (depending on symphonia features).
+/// This is a convenience wrapper around `decode_file_with_progress` that discards progress.
+pub fn decode_file(path: &Path) -> Result<AudioData, DecoderError> {
+    decode_file_with_progress(path, |_| {})
 }
