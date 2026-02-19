@@ -49,6 +49,20 @@ fn main() -> io::Result<()> {
 
     let mut app = AppState::new();
 
+    // Initialize graphics protocol picker for spectrum visualization
+    match ratatui_image::picker::Picker::from_termios() {
+        Ok(mut picker) => {
+            picker.guess_protocol();
+            app.spectrum_picker = Some(picker);
+        }
+        Err(_) => {
+            // Fallback to default font size if terminal query fails
+            let mut picker = ratatui_image::picker::Picker::new((8, 16));
+            picker.guess_protocol();
+            app.spectrum_picker = Some(picker);
+        }
+    }
+
     // Spawn processing thread
     let processing = ProcessingHandle::spawn();
 
@@ -93,8 +107,26 @@ fn main() -> io::Result<()> {
             }
         }
 
+        // Render spectrum as pixel image if picker is available
+        if let Some(ref mut picker) = app.spectrum_picker {
+            if !app.spectrum_bins.is_empty() {
+                let terminal_size = terminal.size()?;
+                // Estimate spectrum area from layout
+                let spectrum_height = (terminal_size.height as usize / 4).max(3) as u32;
+                let spectrum_width = terminal_size.width as u32;
+
+                let rgba_img = voiceforge::ui::spectrum::spectrum_to_image(
+                    &app.spectrum_bins,
+                    spectrum_width,
+                    spectrum_height,
+                );
+                let dynamic_img = image::DynamicImage::ImageRgba8(rgba_img);
+                app.spectrum_state = Some(picker.new_resize_protocol(dynamic_img));
+            }
+        }
+
         terminal.draw(|frame| {
-            layout::render(frame, &app);
+            layout::render(frame, &mut app);
         })?;
 
         if app.should_quit {
@@ -214,6 +246,7 @@ fn main() -> io::Result<()> {
                                 _stream = Some(stream);
                                 app.status_message = None;
                                 app.spectrum_bins.clear();
+                                app.spectrum_state = None;
                                 // Reset A/B state for new file
                                 app.ab_original = false;
                                 app.original_audio = None;

@@ -46,7 +46,7 @@ fn test_decoder_wav_basic() {
 
     // Verify samples are in valid range
     for &s in &audio.samples {
-        assert!(s >= -1.0 && s <= 1.0, "Sample out of range: {s}");
+        assert!((-1.0..=1.0).contains(&s), "Sample out of range: {s}");
     }
 }
 

@@ -4,7 +4,7 @@ use ratatui::Frame;
 use crate::app::{AppMode, AppState, PanelFocus};
 use crate::ui::{file_picker, help, save_dialog, slider, spectrum, status_bar, transport};
 
-pub fn render(frame: &mut Frame, app: &AppState) {
+pub fn render(frame: &mut Frame, app: &mut AppState) {
     let area = frame.area();
 
     // Main vertical layout:
@@ -69,7 +69,7 @@ pub fn render(frame: &mut Frame, app: &AppState) {
         app.focus == PanelFocus::EffectsSliders,
     );
 
-    // Spectrum placeholder
+    // Spectrum visualizer (GPU pixel or Unicode fallback)
     spectrum::render(frame, spectrum_area, app);
 
     // Transport bar

@@ -2,6 +2,8 @@ use crate::audio::decoder::AudioData;
 use crate::audio::playback::PlaybackState;
 use crate::dsp::effects::EffectsParams;
 use crate::dsp::modifier::WorldSliderValues;
+use ratatui_image::picker::Picker;
+use ratatui_image::protocol::StatefulProtocol;
 use std::sync::Arc;
 
 /// Which mode the UI is in.
@@ -121,6 +123,8 @@ pub struct AppState {
     pub file_picker_input: String,
     pub status_message: Option<String>,
     pub spectrum_bins: Vec<f32>,
+    pub spectrum_picker: Option<Picker>,
+    pub spectrum_state: Option<Box<dyn StatefulProtocol>>,
 }
 
 impl AppState {
@@ -142,6 +146,8 @@ impl AppState {
             file_picker_input: String::new(),
             status_message: None,
             spectrum_bins: Vec::new(),
+            spectrum_picker: None,
+            spectrum_state: None,
         }
     }
 
