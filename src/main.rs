@@ -99,18 +99,16 @@ fn main() -> io::Result<()> {
 
     let args: Vec<String> = std::env::args().collect();
     if args.len() >= 2 {
-        match load_file(&args[1], &mut app) {
-            Ok(stream) => {
-                _stream = Some(stream);
-                current_file_path = Some(args[1].clone());
-                // Send audio for WORLD analysis
-                if let Some(ref audio) = app.audio_data {
-                    processing.send(ProcessingCommand::Analyze(Arc::clone(audio)));
-                }
-            }
-            Err(e) => {
-                app.set_status(format!("Error: {e}"));
-            }
+        let path = args[1].clone();
+        let p = Path::new(&path);
+        if p.exists() && p.is_file() {
+            current_file_path = Some(path.clone());
+            app.prepare_for_load();
+            resynth_pending = None;
+            effects_pending = None;
+            processing.send(ProcessingCommand::Load(path));
+        } else {
+            app.set_status(format!("Error: file not found: {}", path));
         }
     }
 
@@ -291,6 +289,36 @@ fn main() -> io::Result<()> {
                 ProcessingResult::Status(msg) => {
                     app.processing_status = Some(msg);
                 }
+                ProcessingResult::DirectoryListing(prefix, entries) => {
+                    // Discard stale: input may have changed since scan was dispatched
+                    if prefix == app.file_picker_input {
+                        app.file_picker_matches = entries;
+                        app.file_picker_scroll = 0;
+                        if let Some(sel) = app.file_picker_selected {
+                            if app.file_picker_matches.is_empty() {
+                                app.file_picker_selected = None;
+                            } else if sel >= app.file_picker_matches.len() {
+                                app.file_picker_selected = Some(app.file_picker_matches.len() - 1);
+                            }
+                        }
+                    }
+                }
+                ProcessingResult::AudioPrecheckDone(path) => {
+                    if app.awaiting_load_path.as_deref() == Some(path.as_str()) {
+                        app.prepare_for_load();
+                        current_file_path = Some(path.clone());
+                        resynth_pending = None;
+                        effects_pending = None;
+                        processing.send(ProcessingCommand::Load(path));
+                    }
+                }
+                ProcessingResult::AudioPrecheckFailed(path, msg) => {
+                    if app.awaiting_load_path.as_deref() == Some(path.as_str()) {
+                        app.awaiting_load_path = None;
+                        app.processing_status = None;
+                        app.set_status(format!("Error: {msg}"));
+                    }
+                }
             }
         }
 
@@ -320,31 +348,13 @@ fn main() -> io::Result<()> {
                 if let Some(action) = handle_key_event(key, &mut app) {
                     match action {
                         Action::Quit => break,
-                        Action::LoadFile(path) => {
-                            let p = Path::new(&path);
-                            if !p.exists() || !p.is_file() {
-                                app.set_status(format!("Error: file not found: {path}"));
-                            } else {
-                                current_file_path = Some(path.clone());
-                                app.processing_status = Some("Loading file...".to_string());
-                                app.status_message = None;
-                                app.spectrum_bins.clear();
-                                // M-1: Reset debounce timers on file load to prevent
-                                // stale Resynthesize from firing before Analyze completes.
-                                resynth_pending = None;
-                                effects_pending = None;
-                                // Reset A/B state for new file
-                                app.ab_original = false;
-                                app.original_audio = None;
-                                // Close file picker (reset input state)
-                                app.mode = voiceforge::app::AppMode::Normal;
-                                app.file_picker_input.clear();
-                                app.input_cursor = 0;
-                                app.file_picker_matches.clear();
-                                app.file_picker_scroll = 0;
-                                app.file_picker_selected = None;
-                                processing.send(ProcessingCommand::Load(path));
-                            }
+                        Action::ScanDirectory => {
+                            processing.send(ProcessingCommand::ScanDirectory(app.file_picker_input.clone()));
+                        }
+                        Action::PrecheckAudio(path) => {
+                            app.processing_status = Some("Checking...".to_string());
+                            app.awaiting_load_path = Some(path.clone());
+                            processing.send(ProcessingCommand::PrecheckAudio(path));
                         }
                         Action::Resynthesize => {
                             // Debounce: reset timer on each slider change
@@ -472,36 +482,3 @@ fn build_file_info(path: &str, audio: &Arc<audio::decoder::AudioData>) -> Option
     })
 }
 
-/// Decode and start playback for a file. Updates app state and returns the cpal Stream.
-fn load_file(path: &str, app: &mut AppState) -> Result<cpal::Stream, Box<dyn std::error::Error>> {
-    let path = Path::new(path);
-    // #14: Pre-check file existence for a clearer error message.
-    if !path.exists() {
-        return Err(format!("file not found: {}", path.display()).into());
-    }
-    if !path.is_file() {
-        return Err(format!("not a file: {}", path.display()).into());
-    }
-    let audio_data = audio::decoder::decode_file(path)?;
-
-    let file_info = build_file_info(&path.to_string_lossy(), &Arc::new(audio_data.clone()))
-        .ok_or("Failed to build file info")?;
-
-    let audio = Arc::new(audio_data);
-    let (stream, state) = audio::playback::start_playback(Arc::clone(&audio))?;
-
-    app.playback = state;
-    // Restore live gain from current slider value (new PlaybackState defaults to 1.0).
-    let gain_db = app.master_sliders[0].value as f32;
-    app.playback
-        .live_gain
-        .store(10.0_f32.powf(gain_db / 20.0).to_bits(), std::sync::atomic::Ordering::Relaxed);
-    // Restore loop state (new PlaybackState defaults to false).
-    app.playback
-        .loop_enabled
-        .store(app.loop_enabled, std::sync::atomic::Ordering::Relaxed);
-    app.file_info = Some(file_info);
-    app.audio_data = Some(audio);
-
-    Ok(stream)
-}

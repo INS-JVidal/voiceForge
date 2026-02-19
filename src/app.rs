@@ -40,7 +40,8 @@ impl PanelFocus {
 #[derive(Debug, Clone, PartialEq)]
 pub enum Action {
     Quit,
-    LoadFile(String),
+    ScanDirectory,
+    PrecheckAudio(String),
     Resynthesize,
     ReapplyEffects,
     /// Live gain update — carries pre-computed linear multiplier.
@@ -144,6 +145,8 @@ pub struct AppState {
     pub eq_selected_band: usize,
     /// WORLD bypass: when true, skip WORLD synthesis and route original mono → effects.
     pub world_bypass: bool,
+    /// Stale-result guard for precheck: expecting AudioPrecheckDone/Failed for this path.
+    pub awaiting_load_path: Option<String>,
 }
 
 impl AppState {
@@ -174,6 +177,7 @@ impl AppState {
             eq_gains: [0.0; 12],
             eq_selected_band: 0,
             world_bypass: false,
+            awaiting_load_path: None,
         }
     }
 
@@ -302,6 +306,18 @@ impl AppState {
     pub fn set_status(&mut self, msg: String) {
         self.status_message = Some(msg);
         self.status_message_time = Some(std::time::Instant::now());
+    }
+
+    /// Reset all transient state for loading a new file.
+    /// Called from main.rs on AudioPrecheckDone and CLI args.
+    pub fn prepare_for_load(&mut self) {
+        self.processing_status = Some("Loading file...".to_string());
+        self.status_message = None;
+        self.status_message_time = None;
+        self.spectrum_bins.clear();
+        self.ab_original = false;
+        self.original_audio = None;
+        self.awaiting_load_path = None;
     }
 
     /// Get the sliders for the currently focused panel.

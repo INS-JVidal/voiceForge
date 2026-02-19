@@ -13,8 +13,9 @@ use world_sys::WorldParams;
 
 /// Commands sent from the main thread to the processing thread.
 pub enum ProcessingCommand {
-    Load(String),                                      // NEW: path to decode
-    Analyze(Arc<AudioData>),
+    Load(String),                                      // path to decode
+    ScanDirectory(String),                             // path prefix as typed
+    PrecheckAudio(String),                             // path to validate
     Resynthesize(WorldSliderValues, EffectsParams),
     ReapplyEffects(EffectsParams),
     Shutdown,
@@ -26,6 +27,9 @@ pub enum ProcessingResult {
     AnalysisDone(AudioData),
     SynthesisDone(AudioData),
     Status(String),
+    DirectoryListing(String, Vec<String>),            // (input_prefix_echo, sorted entries)
+    AudioPrecheckDone(String),                        // path is valid audio
+    AudioPrecheckFailed(String, String),              // (path, error message)
 }
 
 /// Handle for communicating with the processing thread.
@@ -212,36 +216,28 @@ fn handle_command(
 ) -> bool {
     match cmd {
         ProcessingCommand::Load(path) => {
-            let _ = result_tx.send(ProcessingResult::Status("Decoding...".into()));
-            let result_tx_dec = result_tx.clone();
-            match decoder::decode_file_with_progress(Path::new(&path), move |pct| {
-                let _ = result_tx_dec.send(ProcessingResult::Status(
-                    format!("Decoding... {pct}%"),
-                ));
-            }) {
-                Ok(audio_data) => {
-                    let audio = Arc::new(audio_data.clone());
-                    let _ = result_tx.send(ProcessingResult::AudioReady(audio_data, path.clone()));
-                    // Immediately kick off analysis
-                    run_analyze(
-                        &audio,
-                        result_tx,
-                        sample_rate,
-                        cached_params,
-                        original_mono,
-                        post_world_audio,
-                    );
+            run_load_file(
+                path,
+                result_tx,
+                sample_rate,
+                cached_params,
+                original_mono,
+                post_world_audio,
+            );
+        }
+        ProcessingCommand::ScanDirectory(prefix) => {
+            let entries = scan_directory_entries(&prefix);
+            let _ = result_tx.send(ProcessingResult::DirectoryListing(prefix, entries));
+        }
+        ProcessingCommand::PrecheckAudio(path) => {
+            match precheck_audio_file(&path) {
+                Ok(()) => {
+                    let _ = result_tx.send(ProcessingResult::AudioPrecheckDone(path));
                 }
                 Err(e) => {
-                    log::error!("load: failed — {e}");
-                    let _ = result_tx.send(ProcessingResult::Status(format!("Load error: {e}")));
+                    let _ = result_tx.send(ProcessingResult::AudioPrecheckFailed(path, e));
                 }
             }
-        }
-        ProcessingCommand::Analyze(audio) => {
-            run_analyze(
-                &audio, result_tx, sample_rate, cached_params, original_mono, post_world_audio,
-            );
         }
         ProcessingCommand::Resynthesize(values, fx_params) => {
             if cached_params.is_none() {
@@ -262,45 +258,32 @@ fn handle_command(
                     }
                     Ok(ProcessingCommand::Shutdown) => return true,
                     Ok(ProcessingCommand::Load(path)) => {
-                        let _ = result_tx.send(ProcessingResult::Status("Decoding...".into()));
-                        let result_tx_dec = result_tx.clone();
-                        match decoder::decode_file_with_progress(Path::new(&path), move |pct| {
-                            let _ = result_tx_dec.send(ProcessingResult::Status(
-                                format!("Decoding... {pct}%"),
-                            ));
-                        }) {
-                            Ok(audio_data) => {
-                                let audio = Arc::new(audio_data.clone());
-                                let _ = result_tx.send(ProcessingResult::AudioReady(audio_data, path.clone()));
-                                run_analyze(
-                                    &audio,
-                                    result_tx,
-                                    sample_rate,
-                                    cached_params,
-                                    original_mono,
-                                    post_world_audio,
-                                );
-                            }
-                            Err(e) => {
-                                log::error!("load: failed — {e}");
-                                let _ =
-                                    result_tx.send(ProcessingResult::Status(format!("Load error: {e}")));
-                            }
-                        }
-                        // Don't continue draining — new file loaded, abort pending resynth
-                        return false;
-                    }
-                    Ok(ProcessingCommand::Analyze(audio)) => {
-                        run_analyze(
-                            &audio,
+                        run_load_file(
+                            path,
                             result_tx,
                             sample_rate,
                             cached_params,
                             original_mono,
                             post_world_audio,
                         );
-                        // H-2: Continue draining — don't drop the pending Resynthesize.
-                        continue;
+                        // Don't continue draining — new file loaded, abort pending resynth
+                        return false;
+                    }
+                    Ok(ProcessingCommand::ScanDirectory(prefix)) => {
+                        let entries = scan_directory_entries(&prefix);
+                        let _ = result_tx.send(ProcessingResult::DirectoryListing(prefix, entries));
+                        // Continue draining — fast I/O
+                    }
+                    Ok(ProcessingCommand::PrecheckAudio(path)) => {
+                        match precheck_audio_file(&path) {
+                            Ok(()) => {
+                                let _ = result_tx.send(ProcessingResult::AudioPrecheckDone(path));
+                            }
+                            Err(e) => {
+                                let _ = result_tx.send(ProcessingResult::AudioPrecheckFailed(path, e));
+                            }
+                        }
+                        // Continue draining — fast I/O
                     }
                     Err(_) => break,
                 }
@@ -324,32 +307,31 @@ fn handle_command(
                         latest_fx = newer;
                     }
                     Ok(ProcessingCommand::Load(path)) => {
-                        let _ = result_tx.send(ProcessingResult::Status("Decoding...".into()));
-                        let result_tx_dec = result_tx.clone();
-                        match decoder::decode_file_with_progress(Path::new(&path), move |pct| {
-                            let _ = result_tx_dec.send(ProcessingResult::Status(
-                                format!("Decoding... {pct}%"),
-                            ));
-                        }) {
-                            Ok(audio_data) => {
-                                let audio = Arc::new(audio_data.clone());
-                                let _ = result_tx.send(ProcessingResult::AudioReady(audio_data, path.clone()));
-                                run_analyze(
-                                    &audio,
-                                    result_tx,
-                                    sample_rate,
-                                    cached_params,
-                                    original_mono,
-                                    post_world_audio,
-                                );
+                        run_load_file(
+                            path,
+                            result_tx,
+                            sample_rate,
+                            cached_params,
+                            original_mono,
+                            post_world_audio,
+                        );
+                        return false;
+                    }
+                    Ok(ProcessingCommand::ScanDirectory(prefix)) => {
+                        let entries = scan_directory_entries(&prefix);
+                        let _ = result_tx.send(ProcessingResult::DirectoryListing(prefix, entries));
+                        // Continue draining — fast I/O
+                    }
+                    Ok(ProcessingCommand::PrecheckAudio(path)) => {
+                        match precheck_audio_file(&path) {
+                            Ok(()) => {
+                                let _ = result_tx.send(ProcessingResult::AudioPrecheckDone(path));
                             }
                             Err(e) => {
-                                log::error!("load: failed — {e}");
-                                let _ =
-                                    result_tx.send(ProcessingResult::Status(format!("Load error: {e}")));
+                                let _ = result_tx.send(ProcessingResult::AudioPrecheckFailed(path, e));
                             }
                         }
-                        return false;
+                        // Continue draining — fast I/O
                     }
                     Ok(ProcessingCommand::Resynthesize(world_vals, fx_vals)) => {
                         // Full resynthesis supersedes effects-only.
@@ -367,49 +349,31 @@ fn handle_command(
                                 }
                                 Ok(ProcessingCommand::Shutdown) => return true,
                                 Ok(ProcessingCommand::Load(path)) => {
-                                    let _ = result_tx
-                                        .send(ProcessingResult::Status("Decoding...".into()));
-                                    let result_tx_dec = result_tx.clone();
-                                    match decoder::decode_file_with_progress(Path::new(&path), move |pct| {
-                                        let _ = result_tx_dec.send(ProcessingResult::Status(
-                                            format!("Decoding... {pct}%"),
-                                        ));
-                                    }) {
-                                        Ok(audio_data) => {
-                                            let audio = Arc::new(audio_data.clone());
-                                            let _ = result_tx.send(ProcessingResult::AudioReady(
-                                                audio_data,
-                                                path.clone(),
-                                            ));
-                                            run_analyze(
-                                                &audio,
-                                                result_tx,
-                                                sample_rate,
-                                                cached_params,
-                                                original_mono,
-                                                post_world_audio,
-                                            );
-                                        }
-                                        Err(e) => {
-                                            log::error!("load: failed — {e}");
-                                            let _ = result_tx.send(ProcessingResult::Status(
-                                                format!("Load error: {e}"),
-                                            ));
-                                        }
-                                    }
-                                    return false;
-                                }
-                                Ok(ProcessingCommand::Analyze(audio)) => {
-                                    run_analyze(
-                                        &audio,
+                                    run_load_file(
+                                        path,
                                         result_tx,
                                         sample_rate,
                                         cached_params,
                                         original_mono,
                                         post_world_audio,
                                     );
-                                    // H-2: Continue draining.
-                                    continue;
+                                    return false;
+                                }
+                                Ok(ProcessingCommand::ScanDirectory(prefix)) => {
+                                    let entries = scan_directory_entries(&prefix);
+                                    let _ = result_tx.send(ProcessingResult::DirectoryListing(prefix, entries));
+                                    // Continue draining — fast I/O
+                                }
+                                Ok(ProcessingCommand::PrecheckAudio(path)) => {
+                                    match precheck_audio_file(&path) {
+                                        Ok(()) => {
+                                            let _ = result_tx.send(ProcessingResult::AudioPrecheckDone(path));
+                                        }
+                                        Err(e) => {
+                                            let _ = result_tx.send(ProcessingResult::AudioPrecheckFailed(path, e));
+                                        }
+                                    }
+                                    // Continue draining — fast I/O
                                 }
                                 Err(_) => break,
                             }
@@ -428,17 +392,6 @@ fn handle_command(
                         return false;
                     }
                     Ok(ProcessingCommand::Shutdown) => return true,
-                    Ok(ProcessingCommand::Analyze(audio)) => {
-                        run_analyze(
-                            &audio,
-                            result_tx,
-                            sample_rate,
-                            cached_params,
-                            original_mono,
-                            post_world_audio,
-                        );
-                        continue;
-                    }
                     Err(_) => break,
                 }
             }
@@ -451,6 +404,161 @@ fn handle_command(
         ProcessingCommand::Shutdown => return true,
     }
     false
+}
+
+/// Scan directory entries matching a given input prefix.
+fn scan_directory_entries(input: &str) -> Vec<String> {
+    use std::env;
+    use std::fs;
+
+    // Parse input into (dir_part, prefix) at the last '/'
+    let (mut dir_part, prefix) = if let Some(pos) = input.rfind('/') {
+        (input[..=pos].to_string(), input[pos + 1..].to_string())
+    } else {
+        (".".to_string(), input.to_string())
+    };
+
+    // Expand ~ to home directory
+    if dir_part.starts_with("~/") {
+        if let Ok(home) = env::var("HOME") {
+            dir_part = format!("{}{}", home, &dir_part[1..]);
+        } else {
+            dir_part = ".".to_string();
+        }
+    }
+
+    // Fallback: empty dir means current directory
+    if dir_part.is_empty() {
+        dir_part = ".".to_string();
+    }
+
+    // Read directory entries
+    let mut matches = Vec::new();
+    if let Ok(entries) = fs::read_dir(&dir_part) {
+        for entry in entries.take(1000) {
+            let Ok(entry) = entry else { continue };
+            let name = entry.file_name().to_string_lossy().to_string();
+
+            // Hide dotfiles unless prefix starts with '.'
+            if name.starts_with('.') && !prefix.starts_with('.') {
+                continue;
+            }
+
+            // Filter by prefix (case-sensitive, standard Unix behavior)
+            if !name.starts_with(&prefix) {
+                continue;
+            }
+
+            // Determine if directory (follow symlinks)
+            let is_dir = entry
+                .path()
+                .metadata()
+                .map(|m| m.is_dir())
+                .unwrap_or(false);
+
+            // Build stored path: strip "./" prefix if dir_part was "."
+            let display_path = if dir_part == "." {
+                format!("{}{}", name, if is_dir { "/" } else { "" })
+            } else {
+                format!("{}{}{}", dir_part, name, if is_dir { "/" } else { "" })
+            };
+
+            matches.push((is_dir, display_path));
+        }
+    }
+
+    // Sort: directories first, then files; alphabetical within each group
+    matches.sort_by(|a, b| match (a.0, b.0) {
+        (true, false) => std::cmp::Ordering::Less,
+        (false, true) => std::cmp::Ordering::Greater,
+        _ => a.1.cmp(&b.1),
+    });
+
+    matches.into_iter().map(|(_, path)| path).collect()
+}
+
+/// Check if a file appears to be a valid audio file by examining its magic bytes.
+fn precheck_audio_file(path: &str) -> Result<(), String> {
+    use std::fs::File;
+    use std::io::Read;
+
+    let mut file =
+        File::open(path).map_err(|e| format!("Cannot open file: {}", e))?;
+
+    let mut buf = [0u8; 12];
+    let n = file.read(&mut buf).map_err(|e| format!("Cannot read file: {}", e))?;
+
+    if n == 0 {
+        return Err("File is empty".to_string());
+    }
+
+    // Match known audio magic signatures
+    let is_audio = n >= 4
+        && (
+            // WAV: "RIFF" at 0, "WAVE" at 8
+            (buf[..4] == *b"RIFF" && n >= 12 && buf[8..12] == *b"WAVE")
+                ||
+                // FLAC: "fLaC" at 0
+                buf[..4] == *b"fLaC"
+                ||
+                // OGG (Vorbis, Opus, Flac)
+                buf[..4] == *b"OggS"
+                ||
+                // MP3 with ID3 tag: "ID3" at 0
+                buf[..3] == *b"ID3"
+                ||
+                // MP3 sync word: 0xFF 0xEX (frame sync)
+                (buf[0] == 0xFF && (buf[1] & 0xE0 == 0xE0))
+                ||
+                // M4A/AAC/MP4: "ftyp" at offset 4
+                (n >= 8 && buf[4..8] == *b"ftyp")
+                ||
+                // AIFF: "FORM" at 0, "AIFF" at 8
+                (buf[..4] == *b"FORM" && n >= 12 && buf[8..12] == *b"AIFF")
+        );
+
+    if is_audio {
+        Ok(())
+    } else {
+        let filename = Path::new(path)
+            .file_name()
+            .and_then(|n| n.to_str())
+            .unwrap_or("file");
+        Err(format!("Not a recognized audio format: {}", filename))
+    }
+}
+
+/// Run load (decode + analyze) for a file.
+fn run_load_file(
+    path: String,
+    result_tx: &Sender<ProcessingResult>,
+    sample_rate: &mut u32,
+    cached_params: &mut Option<WorldParams>,
+    original_mono: &mut Option<AudioData>,
+    post_world_audio: &mut Option<AudioData>,
+) {
+    let _ = result_tx.send(ProcessingResult::Status("Decoding...".into()));
+    let tx = result_tx.clone();
+    match decoder::decode_file_with_progress(Path::new(&path), move |pct| {
+        let _ = tx.send(ProcessingResult::Status(format!("Decoding... {pct}%")));
+    }) {
+        Ok(audio_data) => {
+            let audio = Arc::new(audio_data.clone());
+            let _ = result_tx.send(ProcessingResult::AudioReady(audio_data, path));
+            run_analyze(
+                &audio,
+                result_tx,
+                sample_rate,
+                cached_params,
+                original_mono,
+                post_world_audio,
+            );
+        }
+        Err(e) => {
+            log::error!("load: failed — {e}");
+            let _ = result_tx.send(ProcessingResult::Status(format!("Load error: {e}")));
+        }
+    }
 }
 
 /// Apply the effects chain, returning the original unchanged if effects are neutral.
