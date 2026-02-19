@@ -74,16 +74,16 @@ fn render_unicode_fallback(frame: &mut Frame, area: Rect, app: &AppState) {
             } else {
                 ' '
             };
-            // Color by row position: punk gradient
-            // Bottom (0-50%): violet (Magenta)
-            // Middle (50-75%): electric blue (LightCyan)
-            // Top (75-100%): bright light green (LightGreen)
+            // Color by row position: saturated punk gradient
+            // Bottom (0-50%): vivid violet (LightMagenta)
+            // Middle (50-75%): vivid electric blue (LightBlue)
+            // Top (75-100%): vivid bright green (LightGreen)
             let color = if row_ratio >= 0.75 {
                 Color::LightGreen
             } else if row_ratio >= 0.5 {
-                Color::LightCyan
+                Color::LightBlue
             } else {
-                Color::Magenta
+                Color::LightMagenta
             };
             spans.push(Span::styled(
                 ch.to_string(),
