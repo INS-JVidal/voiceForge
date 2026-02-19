@@ -68,8 +68,9 @@ impl Drop for ProcessingHandle {
     fn drop(&mut self) {
         // Always detach the thread without joining. This ensures that any exit path
         // (normal 'q' quit, Ctrl+C, or error propagation) immediately frees the UI
-        // for terminal restoration. The processing thread will exit when the process
-        // exits (Shutdown already sent by shutdown() if this was a graceful quit).
+        // for terminal restoration. The main thread sends Shutdown before this Drop runs.
+        // The processing thread will exit cleanly when it finishes the current command
+        // or when the receiver side of the channel closes.
         self.thread.take(); // Drop JoinHandle → detaches, does NOT join
     }
 }
