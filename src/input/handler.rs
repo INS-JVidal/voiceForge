@@ -668,16 +668,13 @@ fn handle_normal(key: KeyEvent, app: &mut AppState) -> Option<Action> {
 /// Determine the action after adjusting an effects or WORLD slider.
 /// Gain (effects index 0) is applied live in the audio callback; all other
 /// effects go through the processing thread.
-fn effects_slider_action(focus: PanelFocus, idx: usize, app: &AppState) -> Option<Action> {
+fn effects_slider_action(focus: PanelFocus, _idx: usize, app: &AppState) -> Option<Action> {
     match focus {
         PanelFocus::WorldSliders => Some(Action::Resynthesize),
-        PanelFocus::EffectsSliders => {
-            if idx == 0 {
-                let linear = 10.0_f32.powf(app.effects_sliders[0].value as f32 / 20.0);
-                Some(Action::LiveGain(linear))
-            } else {
-                Some(Action::ReapplyEffects)
-            }
+        PanelFocus::EffectsSliders => Some(Action::ReapplyEffects),
+        PanelFocus::Master => {
+            let linear = 10.0_f32.powf(app.master_sliders[0].value as f32 / 20.0);
+            Some(Action::LiveGain(linear))
         }
         PanelFocus::EqBands => Some(Action::ReapplyEffects),
         PanelFocus::Transport => None,

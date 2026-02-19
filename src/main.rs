@@ -159,6 +159,8 @@ fn main() -> io::Result<()> {
             match result {
                 ProcessingResult::AudioReady(audio_data) => {
                     let audio = Arc::new(audio_data);
+                    app.processing_status = None; // Clear loading status
+
                     // Build file info from the decoded audio
                     if let Some(ref path) = current_file_path {
                         if let Some(file_info) = build_file_info(path, &audio) {
@@ -167,7 +169,7 @@ fn main() -> io::Result<()> {
                                     _stream = Some(stream);
                                     app.playback = state;
                                     // Restore live gain and loop from sliders
-                                    let gain_db = app.effects_sliders[0].value as f32;
+                                    let gain_db = app.master_sliders[0].value as f32;
                                     app.playback.live_gain.store(
                                         10.0_f32.powf(gain_db / 20.0).to_bits(),
                                         std::sync::atomic::Ordering::Relaxed,
@@ -183,7 +185,11 @@ fn main() -> io::Result<()> {
                                     app.set_status(format!("Playback error: {e}"));
                                 }
                             }
+                        } else {
+                            app.set_status("Failed to build file info".to_string());
                         }
+                    } else {
+                        app.set_status("Internal error: current_file_path not set".to_string());
                     }
                 }
                 ProcessingResult::AnalysisDone(mono_original) => {
@@ -306,6 +312,13 @@ fn main() -> io::Result<()> {
                                 // Reset A/B state for new file
                                 app.ab_original = false;
                                 app.original_audio = None;
+                                // Close file picker (reset input state)
+                                app.mode = voiceforge::app::AppMode::Normal;
+                                app.file_picker_input.clear();
+                                app.input_cursor = 0;
+                                app.file_picker_matches.clear();
+                                app.file_picker_scroll = 0;
+                                app.file_picker_selected = None;
                                 processing.send(ProcessingCommand::Load(path));
                             }
                         }
@@ -332,7 +345,7 @@ fn main() -> io::Result<()> {
                             if let Some(audio) = source {
                                 let mut samples = audio.samples.clone();
                                 // Bake live gain (not stored in audio buffer).
-                                let gain_db = app.effects_sliders[0].value as f32;
+                                let gain_db = app.master_sliders[0].value as f32;
                                 if gain_db != 0.0 {
                                     voiceforge::dsp::effects::apply_gain(
                                         &mut samples,
@@ -458,7 +471,7 @@ fn load_file(path: &str, app: &mut AppState) -> Result<cpal::Stream, Box<dyn std
 
     app.playback = state;
     // Restore live gain from current slider value (new PlaybackState defaults to 1.0).
-    let gain_db = app.effects_sliders[0].value as f32;
+    let gain_db = app.master_sliders[0].value as f32;
     app.playback
         .live_gain
         .store(10.0_f32.powf(gain_db / 20.0).to_bits(), std::sync::atomic::Ordering::Relaxed);

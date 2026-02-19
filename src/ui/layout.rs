@@ -49,10 +49,14 @@ pub fn render(frame: &mut Frame, app: &mut AppState) {
     let eq_area = top_split[1];
     let spectrum_area = top_split[2];
 
-    // Slider panels: two side-by-side
+    // Slider panels: three columns (WORLD 40% | Effects 40% | Master 20%)
     let slider_cols = Layout::default()
         .direction(Direction::Horizontal)
-        .constraints([Constraint::Percentage(50), Constraint::Percentage(50)])
+        .constraints([
+            Constraint::Percentage(40),
+            Constraint::Percentage(40),
+            Constraint::Percentage(20),
+        ])
         .split(sliders_area);
 
     // Render slider panels
@@ -82,6 +86,20 @@ pub fn render(frame: &mut Frame, app: &mut AppState) {
         &app.effects_sliders,
         effects_selected,
         app.focus == PanelFocus::EffectsSliders,
+    );
+
+    let master_selected = if app.focus == PanelFocus::Master {
+        Some(app.selected_slider)
+    } else {
+        None
+    };
+    slider::render(
+        frame,
+        slider_cols[2],
+        "Master",
+        &app.master_sliders,
+        master_selected,
+        app.focus == PanelFocus::Master,
     );
 
     // EQ panel

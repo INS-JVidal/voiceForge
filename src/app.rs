@@ -18,6 +18,7 @@ pub enum AppMode {
 pub enum PanelFocus {
     WorldSliders,
     EffectsSliders,
+    Master,
     EqBands,
     Transport,
 }
@@ -27,7 +28,8 @@ impl PanelFocus {
     pub fn next(self) -> Self {
         match self {
             Self::WorldSliders => Self::EffectsSliders,
-            Self::EffectsSliders => Self::EqBands,
+            Self::EffectsSliders => Self::Master,
+            Self::Master => Self::EqBands,
             Self::EqBands => Self::Transport,
             Self::Transport => Self::WorldSliders,
         }
@@ -114,6 +116,7 @@ pub struct AppState {
     pub selected_slider: usize,
     pub world_sliders: Vec<SliderDef>,
     pub effects_sliders: Vec<SliderDef>,
+    pub master_sliders: Vec<SliderDef>,
     pub file_info: Option<FileInfo>,
     pub playback: PlaybackState,
     pub audio_data: Option<Arc<AudioData>>,
@@ -149,6 +152,7 @@ impl AppState {
             selected_slider: 0,
             world_sliders: Self::default_world_sliders(),
             effects_sliders: Self::default_effects_sliders(),
+            master_sliders: Self::default_master_sliders(),
             file_info: None,
             playback: PlaybackState::new(),
             audio_data: None,
@@ -229,17 +233,20 @@ impl AppState {
         ]
     }
 
+    fn default_master_sliders() -> Vec<SliderDef> {
+        vec![SliderDef {
+            label: "Output Gain",
+            min: -12.0,
+            max: 12.0,
+            value: 0.0,
+            default: 0.0,
+            step: 0.5,
+            unit: "dB",
+        }]
+    }
+
     fn default_effects_sliders() -> Vec<SliderDef> {
         vec![
-            SliderDef {
-                label: "Gain",
-                min: -12.0,
-                max: 12.0,
-                value: 0.0,
-                default: 0.0,
-                step: 0.5,
-                unit: "dB",
-            },
             SliderDef {
                 label: "Low Cut",
                 min: 20.0,
@@ -299,6 +306,7 @@ impl AppState {
         match self.focus {
             PanelFocus::WorldSliders => &self.world_sliders,
             PanelFocus::EffectsSliders => &self.effects_sliders,
+            PanelFocus::Master => &self.master_sliders,
             PanelFocus::EqBands => &[],
             PanelFocus::Transport => &[],
         }
@@ -310,6 +318,7 @@ impl AppState {
         match self.focus {
             PanelFocus::WorldSliders => Some(&mut self.world_sliders),
             PanelFocus::EffectsSliders => Some(&mut self.effects_sliders),
+            PanelFocus::Master => Some(&mut self.master_sliders),
             PanelFocus::EqBands => None,
             PanelFocus::Transport => None,
         }
@@ -326,12 +335,12 @@ impl AppState {
         let s = &self.effects_sliders;
         let eq_gains_f32: [f32; 12] = self.eq_gains.map(|g| g as f32);
         EffectsParams {
-            gain_db: s[0].value as f32,
-            low_cut_hz: s[1].value as f32,
-            high_cut_hz: s[2].value as f32,
-            compressor_thresh_db: s[3].value as f32,
-            reverb_mix: s[4].value as f32,
-            pitch_shift_semitones: s[5].value as f32,
+            gain_db: self.master_sliders[0].value as f32,
+            low_cut_hz: s[0].value as f32,
+            high_cut_hz: s[1].value as f32,
+            compressor_thresh_db: s[2].value as f32,
+            reverb_mix: s[3].value as f32,
+            pitch_shift_semitones: s[4].value as f32,
             eq: EqParams {
                 gains: eq_gains_f32,
             },
