@@ -46,8 +46,15 @@ pub fn render(
 
     // Create a buffer to render the content
     // The display shows values from -6 dB (bottom) to +6 dB (top)
-    let total_rows = inner.height;
+    // Reserve 1 row at top for value label, 1 row at bottom for freq label
+    let available_rows = inner.height.saturating_sub(2);
+    if available_rows < 1 {
+        return; // Not enough space for bars
+    }
+
+    let total_rows = available_rows;
     let center_row = (total_rows / 2) as usize; // 0 dB line
+    let bar_area_y = inner.y + 1; // Start bars after value label row
 
     // For each column
     for band_idx in 0..12 {
@@ -68,7 +75,7 @@ pub fn render(
         // Render the column
         for row in 0..total_rows {
             let row_idx = row as usize;
-            let y = inner.y + row;
+            let y = bar_area_y + row;
 
             // Determine if this is the center (0 dB) line
             let is_zero_line = row_idx == center_row;
@@ -144,7 +151,7 @@ pub fn render(
             freq_para,
             Rect {
                 x: col_x,
-                y: inner.y + total_rows,
+                y: bar_area_y + total_rows,
                 width: col_width,
                 height: 1,
             },

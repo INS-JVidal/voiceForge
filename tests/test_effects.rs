@@ -258,3 +258,118 @@ fn test_eq_boost_isolation_far_band() {
         "63 Hz boost should not significantly alter 10 kHz: ratio {ratio}, expected ~1.0"
     );
 }
+
+#[test]
+fn test_eq_extreme_low_sample_rate() {
+    // 8 kHz sample rate with 16 kHz band — should not panic
+    let sr = 8000;
+    let input = sine_wave(1000.0, sr, sr as usize);
+
+    let mut params = EffectsParams::default();
+    params.eq.gains[11] = 6.0; // 16 kHz band boost
+
+    let output = apply_effects(&input, sr, &params);
+    assert_eq!(output.len(), input.len());
+}
+
+#[test]
+fn test_eq_extreme_high_sample_rate() {
+    // 192 kHz sample rate
+    let sr = 192000;
+    let input = sine_wave(10000.0, sr, 192000);
+
+    let mut params = EffectsParams::default();
+    params.eq.gains[10] = 6.0; // 10 kHz band boost
+
+    let output = apply_effects(&input, sr, &params);
+    assert_eq!(output.len(), input.len());
+    // Verify no NaN/Inf in output
+    for &s in &output {
+        assert!(s.is_finite(), "Output contains non-finite value");
+    }
+}
+
+#[test]
+fn test_eq_all_bands_at_max_boost() {
+    // Extreme: all 12 bands boosted to +6 dB
+    // Note: sequential filtering means gains don't multiply linearly;
+    // each filter changes the spectrum for the next. We just verify:
+    // 1. No NaN/Inf
+    // 2. Some amplification occurs
+    let sr = 44100;
+    let input = sine_wave(1000.0, sr, 44100);
+
+    let mut params = EffectsParams::default();
+    for i in 0..12 {
+        params.eq.gains[i] = 6.0;
+    }
+
+    let output = apply_effects(&input, sr, &params);
+    assert_eq!(output.len(), input.len());
+
+    // Check for NaN/Inf (most important check)
+    for &s in &output {
+        assert!(s.is_finite(), "Output contains NaN/Inf");
+    }
+
+    // Verify at least some amplification
+    let input_rms = rms(&input[2000..]);
+    let output_rms = rms(&output[2000..]);
+    assert!(output_rms > input_rms * 1.5, "Massive boost should amplify signal");
+}
+
+#[test]
+fn test_eq_all_bands_at_max_cut() {
+    // Extreme: all 12 bands cut to -6 dB
+    // Similar to boost test: verify stability and some attenuation
+    let sr = 44100;
+    let input = sine_wave(1000.0, sr, 44100);
+
+    let mut params = EffectsParams::default();
+    for i in 0..12 {
+        params.eq.gains[i] = -6.0;
+    }
+
+    let output = apply_effects(&input, sr, &params);
+    assert_eq!(output.len(), input.len());
+
+    // Check for NaN/Inf (most important check)
+    for &s in &output {
+        assert!(s.is_finite(), "Output contains NaN/Inf");
+    }
+
+    // Verify at least some attenuation
+    let input_rms = rms(&input[2000..]);
+    let output_rms = rms(&output[2000..]);
+    assert!(output_rms < input_rms * 0.9, "Massive cuts should attenuate signal");
+}
+
+#[test]
+fn test_eq_with_very_short_buffer() {
+    // Buffer shorter than filter startup
+    let sr = 44100;
+    let input = sine_wave(1000.0, sr, 10); // Only 10 samples
+
+    let mut params = EffectsParams::default();
+    params.eq.gains[5] = 6.0; // 1 kHz boost
+
+    let output = apply_effects(&input, sr, &params);
+    assert_eq!(output.len(), 10);
+
+    for &s in &output {
+        assert!(s.is_finite(), "Output contains NaN/Inf");
+    }
+}
+
+#[test]
+fn test_eq_neutral_skip_optimization() {
+    // All gains at 0 should return early without processing
+    let sr = 44100;
+    let input = sine_wave(1000.0, sr, 44100);
+
+    let params = EffectsParams::default(); // All EQ gains at 0
+    assert!(params.eq.is_neutral());
+
+    let output = apply_effects(&input, sr, &params);
+    assert_eq!(output, input); // Should be exact same (passthrough)
+}
