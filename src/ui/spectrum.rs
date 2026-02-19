@@ -111,27 +111,48 @@ fn render_unicode_fallback(frame: &mut Frame, area: Rect, app: &AppState) {
             .unwrap_or(44100) as f32;
         let fft_size = 2048.0;
 
-        // Frequency labels: (freq_hz, short_label)
-        // More labels are included; overlap prevention will filter by available screen width.
-        let freq_labels = [
-            (50.0, "50"),
-            (100.0, "100"),
-            (200.0, "200"),
-            (500.0, "500"),
-            (1000.0, "1k"),
-            (2000.0, "2k"),
-            (5000.0, "5k"),
-            (10000.0, "10k"),
-            (15000.0, "15k"),
-            (20000.0, "20k"),
-        ];
+        // Select frequency labels based on terminal width to avoid crowding.
+        // Adaptive label sets ensure good spacing across different screen widths.
+        let freq_labels: &[(f32, &str)] = match num_bars {
+            0..=50 => &[], // Too narrow, skip labels
+            51..=80 => &[
+                (1000.0, "1k"),
+                (10000.0, "10k"),
+            ],
+            81..=120 => &[
+                (100.0, "100"),
+                (1000.0, "1k"),
+                (10000.0, "10k"),
+                (20000.0, "20k"),
+            ],
+            121..=160 => &[
+                (100.0, "100"),
+                (500.0, "500"),
+                (1000.0, "1k"),
+                (5000.0, "5k"),
+                (10000.0, "10k"),
+                (20000.0, "20k"),
+            ],
+            _ => &[
+                (50.0, "50"),
+                (100.0, "100"),
+                (200.0, "200"),
+                (500.0, "500"),
+                (1000.0, "1k"),
+                (2000.0, "2k"),
+                (5000.0, "5k"),
+                (10000.0, "10k"),
+                (15000.0, "15k"),
+                (20000.0, "20k"),
+            ],
+        };
 
         // Build label row: compute positions and prevent overlap
         let mut label_row = vec![' '; num_bars];
         let mut last_col = 0;
         let label_color = Color::Rgb(120, 120, 120); // Muted gray
 
-        for &(freq_hz, label_text) in &freq_labels {
+        for &(freq_hz, label_text) in freq_labels {
             // Inverse quadratic map: bin → col
             let bin = (freq_hz * fft_size / sample_rate).clamp(0.0, (bin_count - 1) as f32);
             let t = (bin / (bin_count as f32 - 1.0)).sqrt();
