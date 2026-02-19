@@ -7,6 +7,19 @@ use crate::ui::{file_picker, help, save_dialog, slider, spectrum, status_bar, tr
 pub fn render(frame: &mut Frame, app: &mut AppState) {
     let area = frame.area();
 
+    // H-5: Minimum terminal size guard to prevent zero-height render areas.
+    if area.height < 12 || area.width < 40 {
+        use ratatui::style::{Color, Style};
+        use ratatui::text::Span;
+        use ratatui::widgets::Paragraph;
+        let msg = Paragraph::new(Span::styled(
+            "Terminal too small (min 40×12)",
+            Style::default().fg(Color::Red),
+        ));
+        frame.render_widget(msg, area);
+        return;
+    }
+
     // Main vertical layout:
     // [Slider panels + Spectrum] (fill)  |  [Transport] (3)  |  [Status bar] (1)
     let vertical = Layout::default()

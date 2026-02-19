@@ -40,6 +40,11 @@ const RESYNTH_DEBOUNCE: Duration = Duration::from_millis(150);
 const EFFECTS_DEBOUNCE: Duration = Duration::from_millis(80);
 
 fn main() -> io::Result<()> {
+    // L-1: Register SIGINT handler so we exit cleanly (TerminalGuard::drop runs).
+    let sigint = Arc::new(std::sync::atomic::AtomicBool::new(false));
+    signal_hook::flag::register(signal_hook::consts::SIGINT, Arc::clone(&sigint))
+        .expect("failed to register SIGINT handler");
+
     // Set up terminal
     enable_raw_mode()?;
     stdout().execute(EnterAlternateScreen)?;
@@ -84,13 +89,24 @@ fn main() -> io::Result<()> {
                 }
             }
             Err(e) => {
-                app.status_message = Some(format!("Error: {e}"));
+                app.set_status(format!("Error: {e}"));
             }
         }
     }
 
+    // L-12: Status message auto-clear timeout.
+    const STATUS_TIMEOUT: Duration = Duration::from_secs(5);
+
     // Main event loop — ~30 fps
     loop {
+        // L-12: Auto-clear status message after timeout.
+        if let Some(t) = app.status_message_time {
+            if t.elapsed() >= STATUS_TIMEOUT {
+                app.status_message = None;
+                app.status_message_time = None;
+            }
+        }
+
         // Sync loop toggle to audio callback atomic.
         app.playback
             .loop_enabled
@@ -129,7 +145,7 @@ fn main() -> io::Result<()> {
             layout::render(frame, &mut app);
         })?;
 
-        if app.should_quit {
+        if app.should_quit || sigint.load(Ordering::Relaxed) {
             break;
         }
 
@@ -179,18 +195,18 @@ fn main() -> io::Result<()> {
                             info.duration_secs = new_audio.duration_secs();
                         }
 
-                        // Clamp position if it's beyond the new buffer
+                        // H-4: Clamp position inside swap_audio's write-lock to avoid TOCTOU.
                         let max_samples = new_audio.samples.len();
                         let current_pos = app.playback.position.load(Ordering::Acquire);
-                        if current_pos > max_samples {
-                            app.playback
-                                .position
-                                .store(max_samples, Ordering::Release);
-                        }
+                        let clamped_pos = current_pos.min(max_samples);
 
                         // Swap audio in running stream if we have a lock, else rebuild
                         if let Some(ref lock) = app.playback.audio_lock {
-                            audio::playback::swap_audio(lock, Arc::clone(&new_audio));
+                            audio::playback::swap_audio(
+                                lock,
+                                Arc::clone(&new_audio),
+                                Some((&app.playback.position, clamped_pos)),
+                            );
                             app.audio_data = Some(new_audio);
                         } else {
                             match audio::playback::rebuild_stream(
@@ -202,8 +218,7 @@ fn main() -> io::Result<()> {
                                     app.audio_data = Some(new_audio);
                                 }
                                 Err(e) => {
-                                    app.status_message =
-                                        Some(format!("Playback error: {e}"));
+                                    app.set_status(format!("Playback error: {e}"));
                                 }
                             }
                         }
@@ -247,6 +262,10 @@ fn main() -> io::Result<()> {
                                 app.status_message = None;
                                 app.spectrum_bins.clear();
                                 app.spectrum_state = None;
+                                // M-1: Reset debounce timers on file load to prevent
+                                // stale Resynthesize from firing before Analyze completes.
+                                resynth_pending = None;
+                                effects_pending = None;
                                 // Reset A/B state for new file
                                 app.ab_original = false;
                                 app.original_audio = None;
@@ -257,7 +276,7 @@ fn main() -> io::Result<()> {
                                 }
                             }
                             Err(e) => {
-                                app.status_message = Some(format!("Error: {e}"));
+                                app.set_status(format!("Error: {e}"));
                             }
                         },
                         Action::Resynthesize => {
@@ -297,12 +316,10 @@ fn main() -> io::Result<()> {
                                     Path::new(&dest_path),
                                 ) {
                                     Ok(()) => {
-                                        app.status_message =
-                                            Some(format!("Saved: {dest_path}"));
+                                        app.set_status(format!("Saved: {dest_path}"));
                                     }
                                     Err(e) => {
-                                        app.status_message =
-                                            Some(format!("Export error: {e}"));
+                                        app.set_status(format!("Export error: {e}"));
                                     }
                                 }
                             }
@@ -317,13 +334,14 @@ fn main() -> io::Result<()> {
                                 };
                                 if let Some(audio) = target {
                                     // Scale position proportionally if buffer lengths differ
+                                    // CR-2: Recover from poisoned lock.
                                     let old_len = {
                                         let guard =
-                                            lock.read().expect("audio lock poisoned");
+                                            lock.read().unwrap_or_else(|e| e.into_inner());
                                         guard.samples.len()
                                     };
                                     let new_len = audio.samples.len();
-                                    if old_len != new_len {
+                                    let new_pos = if old_len != new_len {
                                         let pos =
                                             app.playback.position.load(Ordering::Acquire);
                                         let fraction = if old_len > 0 {
@@ -331,13 +349,11 @@ fn main() -> io::Result<()> {
                                         } else {
                                             0.0
                                         };
-                                        let new_pos =
-                                            (fraction * new_len as f64).round() as usize;
-                                        app.playback.position.store(
-                                            new_pos.min(new_len),
-                                            Ordering::Release,
-                                        );
-                                    }
+                                        (fraction * new_len as f64).round().min(new_len as f64) as usize
+                                    } else {
+                                        let pos = app.playback.position.load(Ordering::Acquire);
+                                        pos.min(new_len)
+                                    };
 
                                     // Update file_info for the active buffer
                                     if let Some(ref mut info) = app.file_info {
@@ -346,9 +362,11 @@ fn main() -> io::Result<()> {
                                         info.channels = audio.channels;
                                     }
 
+                                    // H-4: Position clamp inside swap_audio's write-lock
                                     audio::playback::swap_audio(
                                         lock,
                                         Arc::clone(audio),
+                                        Some((&app.playback.position, new_pos)),
                                     );
                                 }
                             }
@@ -386,6 +404,7 @@ fn load_file(path: &str, app: &mut AppState) -> Result<cpal::Stream, Box<dyn std
         path: path.to_string_lossy().into_owned(),
         sample_rate: audio_data.sample_rate,
         channels: audio_data.channels,
+        original_channels: audio_data.channels,
         duration_secs: audio_data.duration_secs(),
         total_samples: audio_data.samples.len(),
     };

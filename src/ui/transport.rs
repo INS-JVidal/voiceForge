@@ -65,7 +65,8 @@ pub fn render(frame: &mut Frame, area: Rect, app: &AppState) {
     let filled = ((fraction * bar_budget as f64).round() as usize).min(bar_budget);
     let empty = bar_budget.saturating_sub(filled);
 
-    let line = Line::from(vec![
+    // M-12: When bar_budget is 0, omit the seek bar and cursor entirely.
+    let mut spans = vec![
         Span::styled(
             play_icon,
             Style::default()
@@ -73,21 +74,30 @@ pub fn render(frame: &mut Frame, area: Rect, app: &AppState) {
                 .add_modifier(Modifier::BOLD),
         ),
         Span::styled(loop_str, Style::default().fg(Color::White)),
-        Span::styled("─".repeat(filled), Style::default().fg(Color::Cyan)),
-        Span::styled("●", Style::default().fg(Color::White)),
-        Span::styled("─".repeat(empty), Style::default().fg(Color::DarkGray)),
-        Span::styled(time_str, Style::default().fg(Color::White)),
-        Span::styled(
-            ab_display,
-            Style::default()
-                .fg(if app.ab_original {
-                    Color::Green
-                } else {
-                    Color::Magenta
-                })
-                .add_modifier(Modifier::BOLD),
-        ),
-    ]);
+    ];
+    if bar_budget > 0 {
+        spans.push(Span::styled(
+            "─".repeat(filled),
+            Style::default().fg(Color::Cyan),
+        ));
+        spans.push(Span::styled("●", Style::default().fg(Color::White)));
+        spans.push(Span::styled(
+            "─".repeat(empty),
+            Style::default().fg(Color::DarkGray),
+        ));
+    }
+    spans.push(Span::styled(time_str, Style::default().fg(Color::White)));
+    spans.push(Span::styled(
+        ab_display,
+        Style::default()
+            .fg(if app.ab_original {
+                Color::Green
+            } else {
+                Color::Magenta
+            })
+            .add_modifier(Modifier::BOLD),
+    ));
+    let line = Line::from(spans);
 
     let paragraph = Paragraph::new(line);
     frame.render_widget(paragraph, inner);

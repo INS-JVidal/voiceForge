@@ -86,20 +86,31 @@ fn test_effects_highcut_attenuates_treble() {
 #[test]
 fn test_effects_compressor_reduces_dynamics() {
     let sr = 44100;
-    // Loud signal at -6 dBFS with threshold at -20 dB
-    let input: Vec<f32> = sine_wave(440.0, sr, 44100)
+    // M-13: Test that the compressor actually reduces the dynamic range
+    // between a loud signal and a quiet signal.
+    let loud: Vec<f32> = sine_wave(440.0, sr, 44100)
         .iter()
-        .map(|s| s * 0.5) // ~-6 dBFS
+        .map(|s| s * 0.8) // ~-2 dBFS
+        .collect();
+    let quiet: Vec<f32> = sine_wave(440.0, sr, 44100)
+        .iter()
+        .map(|s| s * 0.1) // ~-20 dBFS
         .collect();
     let params = EffectsParams {
         compressor_thresh_db: -20.0,
         ..Default::default()
     };
-    let output = apply_effects(&input, sr, &params);
-    // With makeup gain, output should be roughly similar level but compressed
-    // Just verify it ran without panic and produced non-zero output
-    let rms_out = rms(&output[1000..]);
-    assert!(rms_out > 0.01, "compressor output should not be silent: {rms_out}");
+    let loud_out = apply_effects(&loud, sr, &params);
+    let quiet_out = apply_effects(&quiet, sr, &params);
+
+    // Skip the first 2000 samples for filter/envelope settling
+    let input_ratio = rms(&loud[2000..]) / rms(&quiet[2000..]);
+    let output_ratio = rms(&loud_out[2000..]) / rms(&quiet_out[2000..]);
+
+    assert!(
+        output_ratio < input_ratio,
+        "compressor should reduce dynamic range: input ratio {input_ratio:.2}, output ratio {output_ratio:.2}"
+    );
 }
 
 #[test]

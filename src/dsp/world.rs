@@ -35,7 +35,15 @@ fn from_mono_f64(samples: &[f64], sample_rate: u32) -> AudioData {
 /// consistent mono baseline for the neutral-slider shortcut.
 pub fn to_mono(audio: &AudioData) -> AudioData {
     let channels = audio.channels as usize;
-    if channels <= 1 {
+    // L-2: Handle 0 channels — return empty mono instead of propagating 0-channel AudioData.
+    if channels == 0 {
+        return AudioData {
+            samples: Vec::new(),
+            sample_rate: audio.sample_rate,
+            channels: 1,
+        };
+    }
+    if channels == 1 {
         return audio.clone();
     }
     let samples = audio
@@ -54,9 +62,24 @@ pub fn to_mono(audio: &AudioData) -> AudioData {
 }
 
 /// Analyze audio using WORLD vocoder. Converts to mono f64 internally.
-pub fn analyze(audio: &AudioData) -> WorldParams {
+///
+/// # Errors
+///
+/// Returns an error if audio is empty or has zero channels.
+pub fn analyze(audio: &AudioData) -> Result<WorldParams, world_sys::WorldError> {
     let mono = to_mono_f64(audio);
-    world_sys::analyze(&mono, audio.sample_rate as i32)
+    // H-3: Guard against empty audio before the FFI call, which would panic.
+    if mono.is_empty() {
+        return Err(world_sys::WorldError::InvalidParams(
+            "audio is empty (no samples or zero channels)".into(),
+        ));
+    }
+    if audio.sample_rate == 0 {
+        return Err(world_sys::WorldError::InvalidParams(
+            "sample_rate must be positive".into(),
+        ));
+    }
+    Ok(world_sys::analyze(&mono, audio.sample_rate as i32))
 }
 
 /// Synthesize audio from WORLD parameters. Returns mono AudioData.

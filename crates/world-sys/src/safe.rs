@@ -55,6 +55,13 @@ impl WorldParams {
         if self.fft_size == 0 {
             return Err(WorldError::InvalidParams("fft_size must be positive".into()));
         }
+        // H-8: Validate frame_period to prevent Inf→usize UB in y_length calculation.
+        if !self.frame_period.is_finite() || self.frame_period <= 0.0 {
+            return Err(WorldError::InvalidParams(format!(
+                "frame_period must be finite and positive, got {}",
+                self.frame_period,
+            )));
+        }
 
         let sp_width = self.fft_size / 2 + 1;
 
@@ -202,9 +209,12 @@ pub fn analyze(audio: &[f64], sample_rate: i32) -> WorldParams {
         );
     }
 
-    // #12: Validate that FFI outputs contain finite values (no NaN/Inf from C code).
-    for val in &refined_f0 {
-        debug_assert!(val.is_finite(), "WORLD produced non-finite f0 value: {val}");
+    // M-4: Runtime check (not debug_assert) for non-finite f0 values.
+    // WORLD can produce NaN on silent or very short audio.
+    for val in &mut refined_f0 {
+        if !val.is_finite() {
+            *val = 0.0; // Treat non-finite as unvoiced
+        }
     }
 
     WorldParams {
@@ -230,11 +240,11 @@ pub fn synthesize(params: &WorldParams, sample_rate: i32) -> Result<Vec<f64>, Wo
     let fs = sample_rate;
     let f0_length = params.f0.len() as c_int;
 
-    // Calculate output length
-    let y_length =
-        ((params.f0.len() as f64 - 1.0) * params.frame_period / 1000.0 * sample_rate as f64)
-            as usize
-            + 1;
+    // Calculate output length — clamp before cast to prevent UB from Inf/NaN.
+    let y_length_f = (params.f0.len() as f64 - 1.0) * params.frame_period / 1000.0
+        * sample_rate as f64
+        + 1.0;
+    let y_length = y_length_f.min(MAX_SYNTHESIS_SAMPLES as f64).max(1.0) as usize;
 
     // #19: Guard against unreasonable allocation sizes.
     if y_length > MAX_SYNTHESIS_SAMPLES {

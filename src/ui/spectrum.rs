@@ -50,7 +50,9 @@ fn render_unicode_fallback(frame: &mut Frame, area: Rect, app: &AppState) {
         } else {
             0.0
         };
-        let bin = ((bin_count as f32).powf(t) as usize).min(bin_count - 1);
+        // L-7: Map log-frequency starting from bin 0 (DC) not bin 1.
+        // Use (bin_count - 1) * powf(t) to include the full range [0, bin_count-1].
+        let bin = ((bin_count as f32 - 1.0) * t.powf(2.0)).round() as usize;
         let db = app.spectrum_bins[bin];
         let h = ((db + 80.0) / 80.0 * inner_h as f32).clamp(0.0, inner_h as f32);
         heights.push(h);
@@ -108,7 +110,8 @@ pub fn spectrum_to_image(bins: &[f32], width: u32, height: u32) -> RgbaImage {
     for col in 0..num_bars {
         // Log-frequency mapping: same as current render
         let t = col as f64 / (num_bars - 1).max(1) as f64;
-        let bin = (bin_count as f64).powf(t).min((bin_count - 1) as f64) as usize;
+        // L-7: Use quadratic log-frequency mapping that includes bin 0.
+        let bin = ((bin_count as f64 - 1.0) * t.powf(2.0)).round().min((bin_count - 1) as f64) as usize;
 
         // Amplitude fraction [0.0, 1.0] from dB value in [-80, 0]
         let db = bins[bin].clamp(-80.0, 0.0);

@@ -12,7 +12,12 @@ pub fn render(frame: &mut Frame, area: Rect, app: &AppState) {
         let total_secs = info.duration_secs.max(0.0);
         let mins = (total_secs / 60.0).min(u32::MAX as f64) as u32;
         let secs = (total_secs % 60.0) as u32;
-        let ch_str = if info.channels == 1 { "Mono" } else { "Stereo" };
+        // M-9: Show original channel count, not the post-WORLD mono count.
+        let ch_str = if info.original_channels == 1 {
+            "Mono"
+        } else {
+            "Stereo"
+        };
         let mut spans = vec![
             Span::styled(" File: ", Style::default().fg(Color::DarkGray)),
             Span::styled(&info.name, Style::default().fg(Color::White)),

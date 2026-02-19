@@ -54,7 +54,8 @@ pub fn default_export_path(source_path: &str) -> String {
         .and_then(|s| s.to_str())
         .unwrap_or("output");
 
-    for n in 1_u32.. {
+    // M-14: Use a bounded range to avoid u32 overflow in release builds.
+    for n in 1_u32..=9999 {
         let name = if n == 1 {
             format!("{stem}_processed.wav")
         } else {
@@ -65,7 +66,7 @@ pub fn default_export_path(source_path: &str) -> String {
             return candidate.to_string_lossy().into_owned();
         }
     }
-    // Unreachable in practice.
+    // Fallback if all 9999 candidates exist.
     dir.join(format!("{stem}_processed.wav"))
         .to_string_lossy()
         .into_owned()

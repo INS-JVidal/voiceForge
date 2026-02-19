@@ -159,7 +159,9 @@ pub fn decode_file(path: &Path) -> Result<AudioData, DecoderError> {
         };
 
         let spec = *audio_buf.spec();
-        let frames = audio_buf.capacity() as u64;
+        // H-1: Use frames() (actual decoded count) not capacity() (allocated size)
+        // to avoid reading zero-padded silence between packets.
+        let frames = audio_buf.frames() as u64;
         let needed_samples = frames as usize * spec.channels.count();
 
         // Recreate the buffer if the current packet needs more interleaved samples.

@@ -25,15 +25,15 @@ impl Default for EffectsParams {
 }
 
 impl EffectsParams {
-    /// True when all effects are at their default (bypass) values.
     /// True when all processing-thread effects are at their default (bypass) values.
     /// Note: gain is excluded — it is applied live in the audio callback.
+    /// M-5: Use epsilon for reverb_mix and pitch_shift to be robust against float drift.
     pub fn is_neutral(&self) -> bool {
         self.low_cut_hz <= 20.0
             && self.high_cut_hz >= 20000.0
             && self.compressor_thresh_db >= 0.0
-            && self.reverb_mix == 0.0
-            && self.pitch_shift_semitones == 0.0
+            && self.reverb_mix.abs() < 1e-6
+            && self.pitch_shift_semitones.abs() < 1e-6
     }
 }
 
@@ -79,6 +79,8 @@ pub fn apply_effects(samples: &[f32], sample_rate: u32, params: &EffectsParams) 
 // ── Gain ────────────────────────────────────────────────────────────────
 
 /// Apply gain in dB to a sample buffer. Public for use in WAV export and tests.
+/// M-10: Does not clamp — caller is responsible for clamping if needed
+/// (export_wav clamps via `s.clamp(-1.0, 1.0)`, audio callback clamps after gain).
 pub fn apply_gain(samples: &mut [f32], gain_db: f32) {
     let linear = 10.0_f32.powf(gain_db / 20.0);
     for s in samples.iter_mut() {
@@ -152,6 +154,9 @@ fn apply_biquad(samples: &mut [f32], sample_rate: u32, btype: BiquadType, freq: 
 
 // ── Compressor ──────────────────────────────────────────────────────────
 
+/// L-8: The compressor applies makeup gain unconditionally (above and below threshold).
+/// This means signals below threshold are amplified, which raises the noise floor.
+/// This is standard compressor behavior — "upward compression" of quiet signals.
 fn apply_compressor(samples: &mut [f32], threshold_db: f32, sample_rate: u32) {
     let threshold = 10.0_f32.powf(threshold_db / 20.0);
     let ratio = 4.0_f32;

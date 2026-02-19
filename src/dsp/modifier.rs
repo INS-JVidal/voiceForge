@@ -19,13 +19,15 @@ pub struct WorldSliderValues {
 
 impl WorldSliderValues {
     /// Check if all sliders are at their neutral (default) positions.
+    /// M-5: Use epsilon comparison to be robust against floating-point drift.
     pub fn is_neutral(&self) -> bool {
-        self.pitch_shift == 0.0
-            && self.pitch_range == 1.0
-            && self.speed == 1.0
-            && self.breathiness == 0.0
-            && self.formant_shift == 0.0
-            && self.spectral_tilt == 0.0
+        const EPS: f64 = 1e-9;
+        self.pitch_shift.abs() < EPS
+            && (self.pitch_range - 1.0).abs() < EPS
+            && (self.speed - 1.0).abs() < EPS
+            && self.breathiness.abs() < EPS
+            && self.formant_shift.abs() < EPS
+            && self.spectral_tilt.abs() < EPS
     }
 }
 
@@ -108,6 +110,9 @@ fn apply_speed(params: &mut WorldParams, speed: f64) {
     let new_len = ((old_len as f64) / speed).round().max(1.0) as usize;
 
     params.f0 = resample_1d(&params.f0, new_len);
+    // M-6: Recompute temporal_positions for the new frame count.
+    // WORLD synthesis uses f0.len() × frame_period for output length,
+    // not temporal_positions directly, so audio output is correct.
     params.temporal_positions = (0..new_len)
         .map(|i| i as f64 * params.frame_period / 1000.0)
         .collect();

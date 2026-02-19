@@ -43,7 +43,8 @@ impl PlaybackState {
     /// Toggle play/pause. Returns the new playing state.
     pub fn toggle_playing(&self) -> bool {
         // fetch_xor is atomic — no TOCTOU race with the audio callback.
-        !self.playing.fetch_xor(true, Ordering::Release)
+        // M-3: Use AcqRel so the returned old value is also properly synchronized.
+        !self.playing.fetch_xor(true, Ordering::AcqRel)
     }
 
     /// Seek by a signed sample offset, clamped to [0, max_samples].
@@ -220,8 +221,21 @@ pub fn rebuild_stream(
 
 /// Swap the audio buffer in a running stream's RwLock.
 /// Glitch-free — the audio callback picks up the new data on its next read-lock acquisition.
-pub fn swap_audio(audio_lock: &Arc<RwLock<Arc<AudioData>>>, new_audio: Arc<AudioData>) {
-    let mut guard = audio_lock.write().expect("audio lock poisoned");
+/// Swap the audio buffer in a running stream's RwLock, atomically updating the
+/// playback position if provided. This ensures no TOCTOU window where the callback
+/// reads a stale position against a new (shorter) buffer.
+pub fn swap_audio(
+    audio_lock: &Arc<RwLock<Arc<AudioData>>>,
+    new_audio: Arc<AudioData>,
+    position: Option<(&AtomicUsize, usize)>,
+) {
+    // CR-2: Recover from poisoned lock instead of panicking.
+    let mut guard = audio_lock.write().unwrap_or_else(|e| e.into_inner());
+    // H-4: Clamp position inside the write-lock so the callback can't see
+    // a stale position against the new buffer.
+    if let Some((pos_atomic, clamped)) = position {
+        pos_atomic.store(clamped, Ordering::Release);
+    }
     *guard = new_audio;
 }
 
@@ -287,7 +301,8 @@ fn write_audio_data<T: cpal::SizedSample + cpal::FromSample<f32>>(
             } else {
                 0.0f32
             };
-            *sample = T::from_sample(val * gain);
+            // M-10: Clamp after gain to prevent DAC clipping.
+            *sample = T::from_sample((val * gain).clamp(-1.0, 1.0));
         }
         pos += ac;
     }

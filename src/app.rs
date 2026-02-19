@@ -54,6 +54,8 @@ pub struct FileInfo {
     pub path: String,
     pub sample_rate: u32,
     pub channels: u16,
+    /// M-9: Original channel count from the decoded file, preserved for display.
+    pub original_channels: u16,
     pub duration_secs: f64,
     pub total_samples: usize,
 }
@@ -122,6 +124,8 @@ pub struct AppState {
     pub should_quit: bool,
     pub file_picker_input: String,
     pub status_message: Option<String>,
+    /// L-12: When the status message was set. Used for auto-clear after timeout.
+    pub status_message_time: Option<std::time::Instant>,
     pub spectrum_bins: Vec<f32>,
     pub spectrum_picker: Option<Picker>,
     pub spectrum_state: Option<Box<dyn StatefulProtocol>>,
@@ -145,6 +149,7 @@ impl AppState {
             should_quit: false,
             file_picker_input: String::new(),
             status_message: None,
+            status_message_time: None,
             spectrum_bins: Vec::new(),
             spectrum_picker: None,
             spectrum_state: None,
@@ -267,6 +272,12 @@ impl AppState {
                 unit: "st",
             },
         ]
+    }
+
+    /// Set a status message with auto-clear timestamp (L-12).
+    pub fn set_status(&mut self, msg: String) {
+        self.status_message = Some(msg);
+        self.status_message_time = Some(std::time::Instant::now());
     }
 
     /// Get the sliders for the currently focused panel.

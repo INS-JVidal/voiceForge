@@ -37,10 +37,10 @@ fn handle_file_picker(key: KeyEvent, app: &mut AppState) -> Option<Action> {
                 // #6: Validate path before loading — reject obviously invalid paths.
                 let p = Path::new(&path);
                 if !p.exists() {
-                    app.status_message = Some(format!("File not found: {path}"));
+                    app.set_status(format!("File not found: {path}"));
                     None
                 } else if !p.is_file() {
-                    app.status_message = Some("Path is not a file".to_string());
+                    app.set_status("Path is not a file".to_string());
                     None
                 } else {
                     Some(Action::LoadFile(path))
@@ -73,7 +73,14 @@ fn handle_save_dialog(key: KeyEvent, app: &mut AppState) -> Option<Action> {
             if path.is_empty() {
                 None
             } else {
-                Some(Action::ExportWav(path))
+                // M-8: Validate the save path before dispatching ExportWav.
+                let p = Path::new(&path);
+                if p.is_dir() {
+                    app.set_status("Path is a directory, not a file".to_string());
+                    None
+                } else {
+                    Some(Action::ExportWav(path))
+                }
             }
         }
         KeyCode::Backspace => {
@@ -100,13 +107,8 @@ fn handle_normal(key: KeyEvent, app: &mut AppState) -> Option<Action> {
         }
         KeyCode::Tab => {
             app.focus = app.focus.next();
-            // #8: Always clamp selected_slider, including when count is 0.
-            let count = app.focused_slider_count();
-            if count == 0 {
-                app.selected_slider = 0;
-            } else if app.selected_slider >= count {
-                app.selected_slider = count - 1;
-            }
+            // M-7: Always reset to 0 on Tab for consistent per-panel behavior.
+            app.selected_slider = 0;
             None
         }
         KeyCode::Up => {
@@ -210,15 +212,24 @@ fn handle_normal(key: KeyEvent, app: &mut AppState) -> Option<Action> {
             None
         }
         KeyCode::End => {
+            // M-2: Land on the last frame start, not one-past-end.
             if let Some(ref info) = app.file_info {
+                let last_frame = info
+                    .total_samples
+                    .saturating_sub(info.channels as usize);
                 app.playback
                     .position
-                    .store(info.total_samples, Ordering::Release);
+                    .store(last_frame, Ordering::Release);
             }
             None
         }
         KeyCode::Char('a') => {
-            if app.audio_data.is_some() && app.original_audio.is_some() {
+            // H-9: Also require audio_lock to be available before toggling A/B,
+            // so ToggleAB never flips ab_original without a buffer swap.
+            if app.audio_data.is_some()
+                && app.original_audio.is_some()
+                && app.playback.audio_lock.is_some()
+            {
                 app.ab_original = !app.ab_original;
                 Some(Action::ToggleAB)
             } else {
@@ -235,7 +246,7 @@ fn handle_normal(key: KeyEvent, app: &mut AppState) -> Option<Action> {
                 app.file_picker_input = default_path;
                 app.mode = AppMode::Saving;
             } else {
-                app.status_message = Some("No audio to export".to_string());
+                app.set_status("No audio to export".to_string());
             }
             None
         }

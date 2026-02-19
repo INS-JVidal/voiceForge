@@ -7,7 +7,12 @@ fn main() {
         .cpp(true)
         .std("c++11")
         .include("world-src")
-        .warnings(false);
+        // L-13: Enable warnings from vendored WORLD sources so potential
+        // issues are visible. Suppressions added only for known benign warnings.
+        .warnings(true)
+        .flag_if_supported("-Wno-unused-parameter")
+        .flag_if_supported("-Wno-sign-compare")
+        .flag_if_supported("-Wno-missing-field-initializers");
 
     let sources = [
         "world-src/cheaptrick.cpp",
