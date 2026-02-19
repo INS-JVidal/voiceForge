@@ -123,6 +123,10 @@ pub struct AppState {
     pub file_picker_input: String,
     /// L-11: Cursor position within file_picker_input (byte offset).
     pub input_cursor: usize,
+    /// File picker autocomplete: up to 5 matching file/directory paths; dirs have trailing '/'.
+    pub file_picker_matches: Vec<String>,
+    /// File picker selection: index into file_picker_matches; None when user is typing or list empty.
+    pub file_picker_selected: Option<usize>,
     pub status_message: Option<String>,
     /// L-12: When the status message was set. Used for auto-clear after timeout.
     pub status_message_time: Option<std::time::Instant>,
@@ -147,6 +151,8 @@ impl AppState {
             should_quit: false,
             file_picker_input: String::new(),
             input_cursor: 0,
+            file_picker_matches: Vec::new(),
+            file_picker_selected: None,
             status_message: None,
             status_message_time: None,
             spectrum_bins: Vec::new(),

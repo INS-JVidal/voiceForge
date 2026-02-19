@@ -7,7 +7,10 @@ use ratatui::Frame;
 use crate::app::AppState;
 
 pub fn render(frame: &mut Frame, app: &AppState) {
-    let area = centered_rect(60, 5, frame.area());
+    let n_matches = app.file_picker_matches.len();
+    let popup_h: u16 = if n_matches == 0 { 4 } else { (5 + n_matches) as u16 };
+
+    let area = centered_rect(60, popup_h, frame.area());
 
     // Clear background behind popup
     frame.render_widget(Clear, area);
@@ -24,25 +27,101 @@ pub fn render(frame: &mut Frame, app: &AppState) {
     let inner = block.inner(area);
     frame.render_widget(block, area);
 
-    // L-10/L-11: Render input with cursor and horizontal scrolling.
-    let (before, after) = render_input_line(app, inner.width as usize);
+    // Split inner area vertically: hint (1) + input (1) + match area (remaining)
+    let hint_area = Rect {
+        x: inner.x,
+        y: inner.y,
+        width: inner.width,
+        height: 1,
+    };
+    let input_area = Rect {
+        x: inner.x,
+        y: inner.y + 1,
+        width: inner.width,
+        height: 1,
+    };
+    let match_area = Rect {
+        x: inner.x,
+        y: inner.y + 2,
+        width: inner.width,
+        height: inner.height.saturating_sub(2),
+    };
 
-    let lines = vec![
-        Line::from(Span::styled(
-            " Enter file path (Esc to cancel):",
+    // Render hint line
+    let hint_line = Line::from(Span::styled(
+        " ↑↓ select   Tab complete   Esc cancel ",
+        Style::default().fg(Color::DarkGray),
+    ));
+    frame.render_widget(Paragraph::new(hint_line), hint_area);
+
+    // Render input line with cursor and horizontal scrolling
+    let (before, after) = render_input_line(app, input_area.width as usize);
+    let input_line = Line::from(vec![
+        Span::styled(" > ", Style::default().fg(Color::Yellow)),
+        Span::styled(before, Style::default().fg(Color::White)),
+        Span::styled("█", Style::default().fg(Color::Cyan)),
+        Span::styled(after, Style::default().fg(Color::White)),
+    ]);
+    frame.render_widget(Paragraph::new(input_line), input_area);
+
+    // Render match area
+    if n_matches > 0 {
+        let mut match_lines = Vec::new();
+
+        // Divider
+        let divider = "─".repeat(match_area.width as usize);
+        match_lines.push(Line::from(Span::styled(
+            divider,
             Style::default().fg(Color::DarkGray),
-        )),
-        Line::from(""),
-        Line::from(vec![
-            Span::styled(" > ", Style::default().fg(Color::Yellow)),
-            Span::styled(before, Style::default().fg(Color::White)),
-            Span::styled("█", Style::default().fg(Color::Cyan)),
-            Span::styled(after, Style::default().fg(Color::White)),
-        ]),
-    ];
+        )));
 
-    let paragraph = Paragraph::new(lines);
-    frame.render_widget(paragraph, inner);
+        // Match items
+        for (i, match_path) in app.file_picker_matches.iter().enumerate() {
+            let is_selected = app.file_picker_selected == Some(i);
+            let is_dir = match_path.ends_with('/');
+
+            let prefix = if is_selected { "▶ " } else { "  " };
+            let prefix_style = if is_selected {
+                Style::default().fg(Color::Yellow).add_modifier(Modifier::BOLD)
+            } else {
+                Style::default()
+            };
+
+            let path_style = if is_selected {
+                Style::default()
+                    .fg(Color::Yellow)
+                    .add_modifier(Modifier::BOLD)
+            } else if is_dir {
+                Style::default().fg(Color::Cyan)
+            } else {
+                Style::default().fg(Color::White)
+            };
+
+            // Truncate path if it's too long
+            let max_path_len = (match_area.width as usize).saturating_sub(3);
+            let display_path = if match_path.len() > max_path_len {
+                format!("{}…", &match_path[..max_path_len - 1])
+            } else {
+                match_path.to_string()
+            };
+
+            let line = Line::from(vec![
+                Span::styled(prefix, prefix_style),
+                Span::styled(display_path, path_style),
+            ]);
+            match_lines.push(line);
+        }
+
+        let matches_para = Paragraph::new(match_lines);
+        frame.render_widget(matches_para, match_area);
+    } else if !app.file_picker_input.is_empty() {
+        // Show "no matches" message if user typed something but got no results
+        let no_matches_line = Line::from(Span::styled(
+            "  no matches",
+            Style::default().fg(Color::DarkGray),
+        ));
+        frame.render_widget(Paragraph::new(no_matches_line), match_area);
+    }
 }
 
 /// Create a centered rect of `percent_x`% width and `height` rows.

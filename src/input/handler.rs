@@ -87,37 +87,268 @@ fn handle_text_input(key: &KeyEvent, app: &mut AppState) -> bool {
     }
 }
 
+/// Update file picker suggestions based on current input.
+/// Lists directory contents and filters by the input prefix, keeping first 5 matches.
+fn update_file_picker_matches(app: &mut AppState) {
+    use std::env;
+    use std::fs;
+
+    let input = &app.file_picker_input;
+
+    // Parse input into (dir_part, prefix) at the last '/'
+    let (mut dir_part, prefix) = if let Some(pos) = input.rfind('/') {
+        (input[..=pos].to_string(), input[pos + 1..].to_string())
+    } else {
+        (".".to_string(), input.to_string())
+    };
+
+    // Expand ~ to home directory
+    if dir_part.starts_with("~/") {
+        if let Ok(home) = env::var("HOME") {
+            dir_part = format!("{}{}", home, &dir_part[1..]);
+        } else {
+            dir_part = ".".to_string();
+        }
+    }
+
+    // Fallback: empty dir means current directory
+    if dir_part.is_empty() {
+        dir_part = ".".to_string();
+    }
+
+    // Read directory entries
+    let mut matches = Vec::new();
+    if let Ok(entries) = fs::read_dir(&dir_part) {
+        for entry in entries.take(1000) {
+            let Ok(entry) = entry else { continue };
+            let name = entry.file_name().to_string_lossy().to_string();
+
+            // Hide dotfiles unless prefix starts with '.'
+            if name.starts_with('.') && !prefix.starts_with('.') {
+                continue;
+            }
+
+            // Filter by prefix (case-sensitive, standard Unix behavior)
+            if !name.starts_with(&prefix) {
+                continue;
+            }
+
+            // Determine if directory (follow symlinks)
+            let is_dir = entry
+                .path()
+                .metadata()
+                .map(|m| m.is_dir())
+                .unwrap_or(false);
+
+            // Build stored path: strip "./" prefix if dir_part was "."
+            let display_path = if dir_part == "." {
+                format!("{}{}", name, if is_dir { "/" } else { "" })
+            } else {
+                format!("{}{}{}", dir_part, name, if is_dir { "/" } else { "" })
+            };
+
+            matches.push((is_dir, display_path));
+        }
+    }
+
+    // Sort: directories first, then files; alphabetical within each group
+    matches.sort_by(|a, b| match (a.0, b.0) {
+        (true, false) => std::cmp::Ordering::Less,
+        (false, true) => std::cmp::Ordering::Greater,
+        _ => a.1.cmp(&b.1),
+    });
+
+    // Keep first 5 matches
+    app.file_picker_matches = matches
+        .into_iter()
+        .map(|(_, path)| path)
+        .take(5)
+        .collect();
+
+    // Clamp selection to valid range
+    if let Some(sel) = app.file_picker_selected {
+        if app.file_picker_matches.is_empty() {
+            app.file_picker_selected = None;
+        } else if sel >= app.file_picker_matches.len() {
+            app.file_picker_selected = Some(app.file_picker_matches.len() - 1);
+        }
+    }
+}
+
+/// Check if a file appears to be a valid audio file by examining its magic bytes.
+/// Returns Err with an error message if the file is not recognized as audio or can't be read.
+fn precheck_audio_file(path: &str) -> Result<(), String> {
+    use std::fs::File;
+    use std::io::Read;
+
+    let mut file =
+        File::open(path).map_err(|e| format!("Cannot open file: {}", e))?;
+
+    let mut buf = [0u8; 12];
+    let n = file.read(&mut buf).map_err(|e| format!("Cannot read file: {}", e))?;
+
+    if n == 0 {
+        return Err("File is empty".to_string());
+    }
+
+    // Match known audio magic signatures
+    let is_audio = n >= 4
+        && (
+            // WAV: "RIFF" at 0, "WAVE" at 8
+            (buf[..4] == *b"RIFF" && n >= 12 && buf[8..12] == *b"WAVE")
+                ||
+                // FLAC: "fLaC" at 0
+                buf[..4] == *b"fLaC"
+                ||
+                // OGG (Vorbis, Opus, Flac)
+                buf[..4] == *b"OggS"
+                ||
+                // MP3 with ID3 tag: "ID3" at 0
+                buf[..3] == *b"ID3"
+                ||
+                // MP3 sync word: 0xFF 0xEX (frame sync)
+                (buf[0] == 0xFF && (buf[1] & 0xE0 == 0xE0))
+                ||
+                // M4A/AAC/MP4: "ftyp" at offset 4
+                (n >= 8 && buf[4..8] == *b"ftyp")
+                ||
+                // AIFF: "FORM" at 0, "AIFF" at 8
+                (buf[..4] == *b"FORM" && n >= 12 && buf[8..12] == *b"AIFF")
+        );
+
+    if is_audio {
+        Ok(())
+    } else {
+        let filename = Path::new(path)
+            .file_name()
+            .and_then(|n| n.to_str())
+            .unwrap_or("file");
+        Err(format!("Not a recognized audio format: {}", filename))
+    }
+}
+
 fn handle_file_picker(key: KeyEvent, app: &mut AppState) -> Option<Action> {
     match key.code {
         KeyCode::Esc => {
             app.mode = AppMode::Normal;
             app.file_picker_input.clear();
             app.input_cursor = 0;
+            app.file_picker_matches.clear();
+            app.file_picker_selected = None;
+            None
+        }
+        KeyCode::Down => {
+            if !app.file_picker_matches.is_empty() {
+                match app.file_picker_selected {
+                    None => app.file_picker_selected = Some(0),
+                    Some(i) if i + 1 < app.file_picker_matches.len() => {
+                        app.file_picker_selected = Some(i + 1);
+                    }
+                    _ => {}
+                }
+            }
+            None
+        }
+        KeyCode::Up => {
+            match app.file_picker_selected {
+                Some(0) => app.file_picker_selected = None,
+                Some(i) => app.file_picker_selected = Some(i - 1),
+                None => {}
+            }
+            None
+        }
+        KeyCode::Tab => {
+            if let Some(idx) = app.file_picker_selected {
+                if idx < app.file_picker_matches.len() {
+                    let match_path = app.file_picker_matches[idx].clone();
+                    if match_path.ends_with('/') {
+                        // Navigate into directory
+                        app.file_picker_input = match_path;
+                        app.input_cursor = app.file_picker_input.len();
+                        app.file_picker_selected = None;
+                        update_file_picker_matches(app);
+                    } else {
+                        // Set input to file path (preview before Enter)
+                        app.file_picker_input = match_path;
+                        app.input_cursor = app.file_picker_input.len();
+                    }
+                }
+            }
             None
         }
         KeyCode::Enter => {
+            // Check if a suggestion is selected
+            if let Some(idx) = app.file_picker_selected {
+                if idx < app.file_picker_matches.len() {
+                    let match_path = app.file_picker_matches[idx].clone();
+                    if match_path.ends_with('/') {
+                        // Directory: navigate into it
+                        app.file_picker_input = match_path;
+                        app.input_cursor = app.file_picker_input.len();
+                        app.file_picker_selected = None;
+                        update_file_picker_matches(app);
+                        return None;
+                    } else {
+                        // File: precheck and load
+                        match precheck_audio_file(&match_path) {
+                            Ok(()) => {
+                                app.file_picker_input.clear();
+                                app.input_cursor = 0;
+                                app.file_picker_matches.clear();
+                                app.file_picker_selected = None;
+                                app.mode = AppMode::Normal;
+                                return Some(Action::LoadFile(match_path));
+                            }
+                            Err(e) => {
+                                app.set_status(format!("Error: {}", e));
+                                return None;
+                            }
+                        }
+                    }
+                }
+            }
+
+            // No selection: use raw input
             let path = app.file_picker_input.trim().to_string();
             app.file_picker_input.clear();
             app.input_cursor = 0;
+            app.file_picker_matches.clear();
+            app.file_picker_selected = None;
             app.mode = AppMode::Normal;
+
             if path.is_empty() {
-                None
-            } else {
-                // #6: Validate path before loading — reject obviously invalid paths.
-                let p = Path::new(&path);
-                if !p.exists() {
-                    app.set_status(format!("File not found: {path}"));
+                return None;
+            }
+
+            // Validate path exists and is a file
+            let p = Path::new(&path);
+            if !p.exists() {
+                app.set_status(format!("File not found: {path}"));
+                return None;
+            }
+            if !p.is_file() {
+                app.set_status("Path is not a file".to_string());
+                return None;
+            }
+
+            // Precheck audio file integrity
+            match precheck_audio_file(&path) {
+                Ok(()) => Some(Action::LoadFile(path)),
+                Err(e) => {
+                    app.set_status(format!("Error: {}", e));
                     None
-                } else if !p.is_file() {
-                    app.set_status("Path is not a file".to_string());
-                    None
-                } else {
-                    Some(Action::LoadFile(path))
                 }
             }
         }
         _ => {
-            handle_text_input(&key, app);
+            // All other keys: handle text input, then update matches and reset selection
+            let before_len = app.file_picker_input.len();
+            let handled = handle_text_input(&key, app);
+            if handled && app.file_picker_input.len() != before_len {
+                // Input changed: recompute matches and reset selection
+                update_file_picker_matches(app);
+                app.file_picker_selected = None;
+            }
             None
         }
     }
@@ -306,6 +537,9 @@ fn handle_normal(key: KeyEvent, app: &mut AppState) -> Option<Action> {
                 };
                 app.file_picker_input = default_path;
                 app.input_cursor = app.file_picker_input.len();
+                // Clear file picker matches to avoid visual bleed into save dialog
+                app.file_picker_matches.clear();
+                app.file_picker_selected = None;
                 app.mode = AppMode::Saving;
             } else {
                 app.set_status("No audio to export".to_string());
@@ -316,6 +550,9 @@ fn handle_normal(key: KeyEvent, app: &mut AppState) -> Option<Action> {
             app.mode = AppMode::FilePicker;
             app.file_picker_input.clear();
             app.input_cursor = 0;
+            app.file_picker_selected = None;
+            // Populate with CWD contents immediately on open
+            update_file_picker_matches(app);
             None
         }
         KeyCode::Char('?') => {
