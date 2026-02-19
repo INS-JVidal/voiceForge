@@ -140,22 +140,25 @@ fn main() -> io::Result<()> {
         }
 
         // Render spectrum as pixel image if picker is available
-        // DEBUG: Log spectrum update attempts
+        // DEBUG: Log spectrum less frequently (not every frame!)
         static mut SPECTRUM_FRAME_COUNT: usize = 0;
+        static mut LAST_SPECTRUM_LOG: usize = 0;
         unsafe {
             SPECTRUM_FRAME_COUNT += 1;
-            if SPECTRUM_FRAME_COUNT % 30 == 0 {
-                // Log every 30 frames (~1 second at 30fps)
+            if SPECTRUM_FRAME_COUNT >= LAST_SPECTRUM_LOG + 60 {
+                // Log only every 60 frames (~2 seconds at 30fps) to avoid terminal spam
+                LAST_SPECTRUM_LOG = SPECTRUM_FRAME_COUNT;
                 let max_db = if app.spectrum_bins.is_empty() {
                     f32::NEG_INFINITY
                 } else {
                     app.spectrum_bins.iter().cloned().fold(f32::NEG_INFINITY, f32::max)
                 };
-                eprintln!("[SPECTRUM] frame={}, bins={}, max_db={:.1}, picker={}",
+                eprintln!("[SPECTRUM] frame={}, bins={}, max_db={:.1}, picker={}, audio_lock={}",
                     SPECTRUM_FRAME_COUNT,
                     app.spectrum_bins.len(),
                     max_db,
-                    app.spectrum_picker.is_some());
+                    app.spectrum_picker.is_some(),
+                    app.playback.audio_lock.is_some());
             }
         }
 
@@ -171,17 +174,18 @@ fn main() -> io::Result<()> {
                     spectrum_height,
                 );
 
-                // DEBUG: Verify image was generated
+                // DEBUG: Only warn once if image is black (not every frame!)
                 let mut pixel_count = 0u32;
                 for pixel in rgba_img.pixels() {
-                    // Count non-black pixels
                     if pixel.0[0] > 0 || pixel.0[1] > 0 || pixel.0[2] > 0 {
                         pixel_count += 1;
                     }
                 }
-                if pixel_count == 0 {
-                    eprintln!("[SPECTRUM] WARNING: Generated image is entirely black ({}x{} pixels)",
-                        spectrum_width, spectrum_height);
+                unsafe {
+                    if pixel_count == 0 && SPECTRUM_FRAME_COUNT == LAST_SPECTRUM_LOG {
+                        eprintln!("[SPECTRUM_IMAGE] WARNING: Image entirely black - spectrum_bins={}, max_db may be too low",
+                            app.spectrum_bins.len());
+                    }
                 }
 
                 let dynamic_img = image::DynamicImage::ImageRgba8(rgba_img);
@@ -194,8 +198,6 @@ fn main() -> io::Result<()> {
                 // Spectrum bins empty — will show Unicode fallback
                 app.spectrum_state = None;
             }
-        } else {
-            eprintln!("[SPECTRUM] ERROR: No picker available! GPU rendering unavailable.");
         }
 
         terminal.draw(|frame| {
